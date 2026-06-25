@@ -11,6 +11,8 @@ Chrome/Brave extension for checking whether the Instagram username in the curren
 
 ## Usage
 
+### Check Instagram Album
+
 1. Open an Instagram profile.
 2. Click the Album Sentinel extension icon.
 3. Confirm the detected username.
@@ -24,6 +26,14 @@ The extension checks:
 - `GET /api/albums?shared=true`
 
 It looks for an album whose name exactly matches the Instagram username, case-insensitive.
+
+### Reverse Face Search From Image Right-Click
+
+1. Make sure the Immich reverse face search Docker service is running at `http://localhost:2299/`.
+2. Right-click an image in Chrome/Brave.
+3. Click **Search this face in Immich**.
+
+The extension opens reverse face search in a new tab and passes the clicked image URL. The local reverse face search service downloads the image and searches Immich face embeddings.
 
 ## API Keys
 

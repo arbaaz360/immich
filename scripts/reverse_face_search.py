@@ -340,6 +340,48 @@ def search_image(local_image_path, *, limit=DEFAULT_LIMIT, threshold=DEFAULT_THR
     return {"facesFound": len(faces), "image": str(local_image_path), "results": results, "ml": ml_response}
 
 
+def download_query_image(image_url):
+    parsed = urlparse(image_url)
+    if parsed.scheme not in {"http", "https"}:
+        raise RuntimeError("Only http/https image URLs can be fetched from the context menu")
+
+    headers = {"User-Agent": "ImmichReverseFaceSearch/1.0"}
+    urls_and_headers = [(image_url, headers)]
+    if parsed.netloc.split("@")[-1].split(":")[0] in {"localhost", "127.0.0.1", "immich-server"}:
+        for api_key in get_immich_api_keys():
+            urls_and_headers.append((image_url, {**headers, "x-api-key": api_key}))
+
+    last_error = None
+    for url, request_headers in urls_and_headers:
+        request = Request(url, headers=request_headers)
+        try:
+            with urlopen(request, timeout=60) as response:
+                content_type = response.headers.get("Content-Type", "")
+                if not content_type.startswith("image/"):
+                    raise RuntimeError(f"URL did not return an image. Content-Type: {content_type or 'unknown'}")
+                payload = response.read(25 * 1024 * 1024 + 1)
+                break
+        except Exception as exc:
+            last_error = exc
+    else:
+        raise RuntimeError(f"Could not fetch image URL: {last_error}")
+
+    if len(payload) > 25 * 1024 * 1024:
+        raise RuntimeError("Image is larger than the 25 MB context-menu fetch limit")
+
+    suffix = ".jpg"
+    if "png" in content_type:
+        suffix = ".png"
+    elif "webp" in content_type:
+        suffix = ".webp"
+    elif "gif" in content_type:
+        suffix = ".gif"
+
+    with tempfile.NamedTemporaryFile(delete=False, suffix=suffix) as tmp:
+        tmp.write(payload)
+        return Path(tmp.name)
+
+
 def render_page(body):
     return f"""<!doctype html>
 <html lang="en">
@@ -478,6 +520,25 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path.startswith("/thumb?"):
             self.do_thumb()
+            return
+        query = parse_qs(urlparse(self.path).query)
+        image_url = query.get("imageUrl", [""])[0]
+        if image_url:
+            tmp_path = None
+            try:
+                scope = query.get("scope", ["all"])[0]
+                if scope not in {"all", "instagram"}:
+                    scope = "all"
+                threshold = float(query.get("threshold", [str(DEFAULT_THRESHOLD)])[0])
+                limit = max(1, min(100, int(query.get("limit", [str(DEFAULT_LIMIT)])[0])))
+                tmp_path = download_query_image(image_url)
+                result = search_image(tmp_path, limit=limit, threshold=threshold, scope=scope)
+                self.send_html(render_page(render_results(result)))
+            except Exception as exc:
+                self.send_html(render_page(f"<div class='section error'>{html.escape(str(exc))}</div>"), status=500)
+            finally:
+                if tmp_path is not None:
+                    tmp_path.unlink(missing_ok=True)
             return
         self.send_html(render_page(""))
 
