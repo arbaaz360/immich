@@ -21,7 +21,9 @@ It intentionally does not store databases, Redis data, thumbnails, model cache, 
 - Thumbnail generation does not create preview files.
 - Video thumbnail generation does not create preview files.
 - Video transcoding is disabled by local patch; `Transcode Videos` will not queue video encode jobs, and already queued encode jobs skip.
-- Reverse face search helper can upload a query image, extract an Immich face embedding, and search the local `face_search` table.
+- Reverse face search runs as a Docker Compose service on `http://localhost:2299/`.
+- Immich web has a small `Face` button that opens reverse face search in a new tab.
+- Reverse face search can upload a query image, extract an Immich face embedding, and search the local `face_search` table.
 
 ## Restore After C Drive Format
 
@@ -45,16 +47,20 @@ The restore script backs up an existing `X:\Immich\docker-compose.yml` before re
 
 ## Reverse Face Search
 
-Start it with:
+It starts with Docker Compose as `immich-reverse-face-search`.
+
+Open it directly with:
+
+```text
+http://localhost:2299/
+```
+
+Or click the `Face` button in the bottom-right of the Immich web UI.
+
+The old standalone PowerShell launcher is still included for manual/debug use:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\Start-ReverseFaceSearch.ps1
-```
-
-Open:
-
-```text
-http://127.0.0.1:2299/
 ```
 
 For thumbnail previews on the result page, provide an Immich API key in one of these ways:
