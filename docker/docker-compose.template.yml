@@ -1,0 +1,153 @@
+services:
+  immich-server:
+    image: ghcr.io/immich-app/immich-server:release
+    container_name: immich-server
+    restart: unless-stopped
+    depends_on:
+      - database
+      - cache
+    environment:
+      - TZ=Asia/Kolkata
+      - DB_HOSTNAME=database
+      - DB_PORT=5432
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=${IMMICH_DB_PASSWORD:-postgres}
+      - DB_DATABASE_NAME=immich
+      - REDIS_HOSTNAME=cache
+      - UPLOAD_LOCATION=/data
+      - IMMICH_MACHINE_LEARNING_URL=http://immich-ml:3003
+    volumes:
+      - X:/Immich/uploads:/data
+      - X:/Immich/uploads/library:/external
+      - E:/:/mnt/e:ro
+      - C:/Immich/thumbnail-cache:/thumbnail-cache
+      - C:/Immich/patches/immich-2.7.5/asset-media.service.js:/usr/src/app/server/dist/services/asset-media.service.js:ro
+      - C:/Immich/patches/immich-2.7.5/media.service.js:/usr/src/app/server/dist/services/media.service.js:ro
+      - C:/Immich/patches/immich-2.7.5/smart-info.service.js:/usr/src/app/server/dist/services/smart-info.service.js:ro
+      - C:/Immich/patches/immich-2.7.5/person.service.js:/usr/src/app/server/dist/services/person.service.js:ro
+      - C:/Immich/patches/immich-2.7.5/ocr.service.js:/usr/src/app/server/dist/services/ocr.service.js:ro
+      - C:/Immich/patches/immich-2.7.5/asset-job.repository.js:/usr/src/app/server/dist/repositories/asset-job.repository.js:ro
+    ports:
+      - "2283:2283"
+
+  immich-microservices:
+    image: ghcr.io/immich-app/immich-server:release
+    container_name: immich-microservices
+    restart: unless-stopped
+    depends_on:
+      - database
+      - cache
+    environment:
+      - NODE_ENV=production
+      - TZ=Asia/Kolkata
+      - DB_HOSTNAME=database
+      - DB_PORT=5432
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=${IMMICH_DB_PASSWORD:-postgres}
+      - DB_DATABASE_NAME=immich
+      - REDIS_HOSTNAME=cache
+      - UPLOAD_LOCATION=/data
+      - IMMICH_UPLOAD_MAX_FILE_SIZE=50000MB
+      - IMMICH_MACHINE_LEARNING_URL=http://immich-ml:3003
+    volumes:
+      - X:/Immich/uploads:/data
+      - X:/Immich/uploads/library:/external
+      - E:/:/mnt/e:ro
+      - C:/Immich/thumbnail-cache:/thumbnail-cache
+      - C:/Immich/patches/immich-2.7.5/asset-media.service.js:/usr/src/app/server/dist/services/asset-media.service.js:ro
+      - C:/Immich/patches/immich-2.7.5/media.service.js:/usr/src/app/server/dist/services/media.service.js:ro
+      - C:/Immich/patches/immich-2.7.5/smart-info.service.js:/usr/src/app/server/dist/services/smart-info.service.js:ro
+      - C:/Immich/patches/immich-2.7.5/person.service.js:/usr/src/app/server/dist/services/person.service.js:ro
+      - C:/Immich/patches/immich-2.7.5/ocr.service.js:/usr/src/app/server/dist/services/ocr.service.js:ro
+      - C:/Immich/patches/immich-2.7.5/asset-job.repository.js:/usr/src/app/server/dist/repositories/asset-job.repository.js:ro
+
+  immich-ml:
+    image: ghcr.io/immich-app/immich-machine-learning:release-cuda
+    container_name: immich-ml
+    restart: unless-stopped
+    gpus: all
+    environment:
+      - TZ=Asia/Kolkata
+      - CUDA_MODULE_LOADING=LAZY
+      - CUDA_LAUNCH_BLOCKING=1
+      - REQUEST_THREADS=8
+    volumes:
+      - X:/Immich/model-cache:/cache
+
+  database:
+    image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
+    container_name: immich-db
+    restart: unless-stopped
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=${IMMICH_DB_PASSWORD:-postgres}
+      - POSTGRES_DB=immich
+      - POSTGRES_INITDB_ARGS=--data-checksums
+    volumes:
+      - C:/Immich/database:/var/lib/postgresql/data
+    shm_size: 1gb
+
+  cache:
+    image: docker.io/valkey/valkey:8
+    container_name: immich-cache
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli ping || exit 1"]
+    volumes:
+      - C:/Immich/redis:/data
+
+  # ----- Folder → Album creators (one per user) -----
+
+  immich-folder-album-creator-arbaaz:
+    image: salvoxia/immich-folder-album-creator:latest
+    container_name: immich-folder-album-creator-arbaaz
+    restart: unless-stopped
+    depends_on:
+      - immich-server
+    volumes:
+      - X:/Immich/uploads/library:/external:ro
+    environment:
+      API_URL: "http://immich-server:2283/api"
+      API_KEY: "${IMMICH_API_KEY_ARBAAZ}"
+      ROOT_PATH: "/external/bf5e8711-4e2b-45f3-84a4-20738f0be4b2"
+      ALBUM_LEVELS: "1"
+      SYNC_MODE: "2"
+      RUN_IMMEDIATELY: "1"
+      CRON_EXPRESSION: "*/5 * * * *"
+      TZ: "Asia/Kolkata"
+
+  immich-folder-album-creator-realfire2023:
+    image: salvoxia/immich-folder-album-creator:latest
+    container_name: immich-folder-album-creator-realfire2023
+    restart: unless-stopped
+    depends_on:
+      - immich-server
+    volumes:
+      - X:/Immich/uploads/library:/external:ro
+    environment:
+      API_URL: "http://immich-server:2283/api"
+      API_KEY: "${IMMICH_API_KEY_REALFIRE2023}"
+      ROOT_PATH: "/external/274e2f91-7d8d-4478-b03b-00288bc25c42"
+      ALBUM_LEVELS: "1"
+      SYNC_MODE: "2"
+      RUN_IMMEDIATELY: "1"
+      CRON_EXPRESSION: "*/5 * * * *"
+      TZ: "Asia/Kolkata"
+
+  immich-folder-album-creator-firereal06:
+    image: salvoxia/immich-folder-album-creator:latest
+    container_name: immich-folder-album-creator-firereal06
+    restart: unless-stopped
+    depends_on:
+      - immich-server
+    volumes:
+      - X:/Immich/uploads/library:/external:ro
+    environment:
+      API_URL: "http://immich-server:2283/api"
+      API_KEY: "${IMMICH_API_KEY_FIREREAL06}"
+      ROOT_PATH: "/external/96e7f049-ce60-47a5-9548-a6ebefd14d85"
+      ALBUM_LEVELS: "1"
+      SYNC_MODE: "2"
+      RUN_IMMEDIATELY: "1"
+      CRON_EXPRESSION: "*/5 * * * *"
+      TZ: "Asia/Kolkata"

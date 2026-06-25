@@ -1,0 +1,14 @@
+*.log
+*.tmp
+*.bak
+*.local
+*.local.*
+__pycache__/
+*.pyc
+.env
+immich_api_keys.local.txt
+database/
+redis/
+thumbnail-cache/
+uploads/
+model-cache/
