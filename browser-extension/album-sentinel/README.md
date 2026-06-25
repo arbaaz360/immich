@@ -33,7 +33,9 @@ It looks for an album whose name exactly matches the Instagram username, case-in
 2. Right-click an image in Chrome/Brave.
 3. Click **Search this face in Immich**.
 
-The extension opens reverse face search in a new tab and passes the clicked image URL. The local reverse face search service downloads the image and searches Immich face embeddings.
+The extension opens a search tab, downloads the clicked image, and submits it to the local reverse face search service as an upload.
+
+If the image is a browser-only `blob:` image, the extension captures the image data from the page before opening the search tab. Normal `http` and `https` images are downloaded by the extension tab and submitted to the reverse face search service as an upload.
 
 ## API Keys
 
