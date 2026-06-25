@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Immich Album Checker</title>
+  <style>
+    :root {
+      font-family: Arial, sans-serif;
+      color: #0f172a;
+    }
+    body {
+      margin: 0;
+      padding: 16px;
+      width: 340px;
+      box-sizing: border-box;
+      background: linear-gradient(135deg, #eef2ff, #f8fafc);
+    }
+    h1 {
+      margin: 0 0 12px;
+      font-size: 18px;
+      font-weight: 700;
+      color: #0b1b42;
+    }
+    label {
+      display: block;
+      font-size: 12px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #1f2937;
+    }
+    input {
+      width: 100%;
+      padding: 8px 10px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 13px;
+      box-sizing: border-box;
+    }
+    .row {
+      margin-bottom: 12px;
+    }
+    .small {
+      font-size: 12px;
+      color: #475569;
+      margin-top: 4px;
+    }
+    .buttons {
+      display: flex;
+      gap: 8px;
+      margin-top: 6px;
+    }
+    button {
+      flex: 1;
+      padding: 10px 12px;
+      border: none;
+      border-radius: 8px;
+      font-weight: 700;
+      cursor: pointer;
+      background: #0f172a;
+      color: #fff;
+      transition: background 0.15s ease, transform 0.1s ease;
+    }
+    button.secondary {
+      background: #e5e7eb;
+      color: #111827;
+    }
+    button:active {
+      transform: translateY(1px);
+    }
+    #status {
+      margin-top: 10px;
+      padding: 8px 10px;
+      border-radius: 6px;
+      background: #f8fafc;
+      border: 1px solid #e2e8f0;
+      font-size: 13px;
+      min-height: 18px;
+    }
+    #status.success {
+      border-color: #10b981;
+      color: #065f46;
+      background: #ecfdf3;
+    }
+    #status.error {
+      border-color: #ef4444;
+      color: #7f1d1d;
+      background: #fef2f2;
+    }
+    #detectedUser {
+      font-weight: 700;
+    }
+  </style>
+</head>
+<body>
+  <h1>Album Sentinel</h1>
+
+  <div class="row">
+    <div class="small">Detected username from this tab: <span id="detectedUser">–</span></div>
+  </div>
+
+  <div class="row">
+    <label for="username">Username to check</label>
+    <input id="username" type="text" placeholder="instagram_username">
+  </div>
+
+  <div class="row">
+    <label for="baseUrl">Immich base URL</label>
+    <input id="baseUrl" type="text" placeholder="http://localhost:2283">
+    <div class="small">Full Immich URL without a trailing slash.</div>
+  </div>
+
+  <div class="row">
+    <label for="preset">API key presets (from docker-compose)</label>
+    <select id="preset">
+      <option value="">Choose a preset</option>
+    </select>
+    <div class="small">Select to auto-fill the API key; manual entry still works.</div>
+  </div>
+
+  <div class="row">
+    <label for="apiKey">Immich API key</label>
+    <input id="apiKey" type="password" placeholder="Your Immich API key">
+    <div class="small">Create an API key in Immich → Settings → API Keys.</div>
+  </div>
+
+  <div class="buttons">
+    <button id="saveBtn" class="secondary" type="button">Save settings</button>
+    <button id="checkBtn" type="button">Check album</button>
+  </div>
+
+  <div id="status"></div>
+  <div id="details" class="small"></div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
