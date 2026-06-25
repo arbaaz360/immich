@@ -1,6 +1,6 @@
 services:
   immich-server:
-    image: ghcr.io/immich-app/immich-server:release
+    image: ghcr.io/immich-app/immich-server:v2.7.5
     container_name: immich-server
     restart: unless-stopped
     depends_on:
@@ -31,7 +31,7 @@ services:
       - "2283:2283"
 
   immich-microservices:
-    image: ghcr.io/immich-app/immich-server:release
+    image: ghcr.io/immich-app/immich-server:v2.7.5
     container_name: immich-microservices
     restart: unless-stopped
     depends_on:
@@ -62,7 +62,7 @@ services:
       - C:/Immich/patches/immich-2.7.5/asset-job.repository.js:/usr/src/app/server/dist/repositories/asset-job.repository.js:ro
 
   immich-ml:
-    image: ghcr.io/immich-app/immich-machine-learning:release-cuda
+    image: ghcr.io/immich-app/immich-machine-learning:v2.7.5-cuda
     container_name: immich-ml
     restart: unless-stopped
     gpus: all
