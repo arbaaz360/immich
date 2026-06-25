@@ -28,3 +28,21 @@ It looks for an album whose name exactly matches the Instagram username, case-in
 ## API Keys
 
 API keys are intentionally not committed. Enter them in the extension popup, or fill local preset values in `popup.js` in your private unpacked copy.
+
+For this PC, the preferred private file is:
+
+```text
+apiKeys.local.js
+```
+
+Create it next to `popup.js` with this shape:
+
+```js
+window.ALBUM_SENTINEL_PRESETS = [
+  { label: "arbaaz", apiKey: "..." },
+  { label: "realfire2023", apiKey: "..." },
+  { label: "firereal06", apiKey: "..." }
+];
+```
+
+That file is ignored by Git. When present, the extension can use **Check all accounts**.

@@ -3,13 +3,16 @@ const KEYS = {
   apiKey: "immichApiKey"
 };
 
-// Optional local presets. Keep API keys out of GitHub; fill these manually
-// in your unpacked local copy if you want preset buttons.
-const PRESETS = [
+const DEFAULT_PRESETS = [
   { label: "arbaaz", apiKey: "" },
   { label: "realfire2023", apiKey: "" },
   { label: "firereal06", apiKey: "" }
 ];
+
+const PRESETS =
+  Array.isArray(window.ALBUM_SENTINEL_PRESETS) && window.ALBUM_SENTINEL_PRESETS.length
+    ? window.ALBUM_SENTINEL_PRESETS
+    : DEFAULT_PRESETS;
 
 const usernameInput = document.getElementById("username");
 const baseUrlInput = document.getElementById("baseUrl");
@@ -20,6 +23,7 @@ const statusEl = document.getElementById("status");
 const detailsEl = document.getElementById("details");
 const saveBtn = document.getElementById("saveBtn");
 const checkBtn = document.getElementById("checkBtn");
+const checkAllBtn = document.getElementById("checkAllBtn");
 
 document.addEventListener("DOMContentLoaded", async () => {
   await loadSettings();
@@ -36,6 +40,10 @@ checkBtn.addEventListener("click", async () => {
   await handleCheck();
 });
 
+checkAllBtn.addEventListener("click", async () => {
+  await handleCheckAll();
+});
+
 presetSelect.addEventListener("change", () => {
   const chosen = PRESETS.find((p) => p.label === presetSelect.value);
   if (chosen) {
@@ -48,10 +56,6 @@ async function loadSettings() {
     chrome.storage.sync.get([KEYS.baseUrl, KEYS.apiKey], (result) => {
       baseUrlInput.value = result[KEYS.baseUrl] || "http://localhost:2283";
       apiKeyInput.value = result[KEYS.apiKey] || "";
-      if (!apiKeyInput.value && PRESETS.length) {
-        apiKeyInput.value = PRESETS[0].apiKey;
-        presetSelect.value = PRESETS[0].label;
-      }
       resolve();
     });
   });
@@ -149,6 +153,7 @@ async function handleCheck() {
   }
 
   checkBtn.disabled = true;
+  checkAllBtn.disabled = true;
   showStatus("Checking albums via Immich API…");
 
   await saveSettings();
@@ -207,7 +212,100 @@ async function handleCheck() {
     detailsEl.textContent = "";
   } finally {
     checkBtn.disabled = false;
+    checkAllBtn.disabled = false;
   }
+}
+
+async function handleCheckAll() {
+  const username = usernameInput.value.trim();
+  const baseUrl = baseUrlInput.value.trim().replace(/\/$/, "");
+  const presets = PRESETS.filter((preset) => preset.apiKey);
+
+  if (!username) {
+    showStatus("Enter a username to check.", "error");
+    return;
+  }
+  if (!baseUrl) {
+    showStatus("Immich base URL is required.", "error");
+    return;
+  }
+  if (!presets.length) {
+    showStatus("No local API key presets are configured.", "error");
+    return;
+  }
+
+  checkBtn.disabled = true;
+  checkAllBtn.disabled = true;
+  showStatus(`Checking ${presets.length} accounts via Immich API...`);
+  detailsEl.textContent = "";
+
+  try {
+    const matches = [];
+    const failures = [];
+
+    for (const preset of presets) {
+      try {
+        const found = await findAlbum(username, baseUrl, preset.apiKey);
+        if (found) {
+          matches.push({ preset, ...found });
+        }
+      } catch (err) {
+        failures.push(`${preset.label}: ${err.message}`);
+      }
+    }
+
+    if (matches.length) {
+      showStatus(`Album "${username}" exists in ${matches.length} account(s).`, "success");
+      detailsEl.textContent = matches
+        .map(({ preset, match, source }) => {
+          const count = match.assetCount ?? match.assets?.length ?? "unknown";
+          const owner = match.owner?.email || match.owner?.name || preset.label;
+          return `${preset.label}: ${source}, ${count} items, owner ${owner}`;
+        })
+        .join("\n");
+    } else {
+      showStatus(`Album "${username}" was not found in configured accounts.`, "error");
+      detailsEl.textContent = failures.length ? `Failures: ${failures.join(" | ")}` : "";
+    }
+  } finally {
+    checkBtn.disabled = false;
+    checkAllBtn.disabled = false;
+  }
+}
+
+async function findAlbum(username, baseUrl, apiKey) {
+  const endpoints = [
+    { label: "owned", url: `${baseUrl}/api/albums` },
+    { label: "shared", url: `${baseUrl}/api/albums?shared=true` }
+  ];
+
+  for (const endpoint of endpoints) {
+    const res = await fetch(endpoint.url, {
+      method: "GET",
+      headers: {
+        Accept: "application/json",
+        "x-api-key": apiKey
+      }
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      throw new Error("auth failed");
+    }
+    if (!res.ok) {
+      throw new Error(`Immich responded with ${res.status} on ${endpoint.label} albums`);
+    }
+
+    const albums = await res.json();
+    const match = Array.isArray(albums)
+      ? albums.find((album) => album?.albumName?.toLowerCase() === username.toLowerCase())
+      : null;
+
+    if (match) {
+      return { match, source: endpoint.label };
+    }
+  }
+
+  return null;
 }
 
 function showStatus(message, type) {
@@ -218,7 +316,7 @@ function showStatus(message, type) {
 }
 
 function populatePresets() {
-  PRESETS.forEach((p) => {
+  PRESETS.filter((p) => p.apiKey).forEach((p) => {
     const opt = document.createElement("option");
     opt.value = p.label;
     opt.textContent = p.label;

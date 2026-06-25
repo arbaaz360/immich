@@ -89,6 +89,9 @@
     #detectedUser {
       font-weight: 700;
     }
+    #details {
+      white-space: pre-line;
+    }
   </style>
 </head>
 <body>
@@ -110,11 +113,11 @@
   </div>
 
   <div class="row">
-    <label for="preset">API key presets (from docker-compose)</label>
+    <label for="preset">API key presets</label>
     <select id="preset">
       <option value="">Choose a preset</option>
     </select>
-    <div class="small">Select to auto-fill the API key; manual entry still works.</div>
+    <div class="small">Loaded from apiKeys.local.js when present; manual entry still works.</div>
   </div>
 
   <div class="row">
@@ -127,10 +130,14 @@
     <button id="saveBtn" class="secondary" type="button">Save settings</button>
     <button id="checkBtn" type="button">Check album</button>
   </div>
+  <div class="buttons">
+    <button id="checkAllBtn" type="button">Check all accounts</button>
+  </div>
 
   <div id="status"></div>
   <div id="details" class="small"></div>
 
+  <script src="apiKeys.local.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
