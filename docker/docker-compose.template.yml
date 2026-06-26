@@ -22,7 +22,11 @@ services:
       - E:/:/mnt/e:ro
       - C:/Immich/thumbnail-cache:/thumbnail-cache
       - C:/Immich/patches/immich-2.7.5/web/index.html:/build/www/index.html:ro
+      - C:/Immich/patches/immich-2.7.5/web/index.html.br:/build/www/index.html.br:ro
+      - C:/Immich/patches/immich-2.7.5/web/index.html.gz:/build/www/index.html.gz:ro
       - C:/Immich/patches/immich-2.7.5/web/_app/immutable/chunks/Cv3joWmC2.js:/build/www/_app/immutable/chunks/Cv3joWmC2.js:ro
+      - C:/Immich/patches/immich-2.7.5/web/_app/immutable/chunks/Cv3joWmC2.js.br:/build/www/_app/immutable/chunks/Cv3joWmC2.js.br:ro
+      - C:/Immich/patches/immich-2.7.5/web/_app/immutable/chunks/Cv3joWmC2.js.gz:/build/www/_app/immutable/chunks/Cv3joWmC2.js.gz:ro
       - C:/Immich/patches/immich-2.7.5/asset-media.service.js:/usr/src/app/server/dist/services/asset-media.service.js:ro
       - C:/Immich/patches/immich-2.7.5/media.service.js:/usr/src/app/server/dist/services/media.service.js:ro
       - C:/Immich/patches/immich-2.7.5/smart-info.service.js:/usr/src/app/server/dist/services/smart-info.service.js:ro
