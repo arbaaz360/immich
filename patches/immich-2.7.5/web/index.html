@@ -201,6 +201,175 @@
 				}
 			</script>
 		</div>
+    <script>
+      (() => {
+        const pagerId = 'immich-album-pager';
+
+        const isAlbumsPage = () => location.pathname === '/albums';
+
+        const removePager = () => {
+          document.getElementById(pagerId)?.remove();
+        };
+
+        const getPager = () => {
+          if (!isAlbumsPage()) {
+            removePager();
+            return null;
+          }
+
+          let pager = document.getElementById(pagerId);
+          if (pager) {
+            return pager;
+          }
+
+          pager = document.createElement('div');
+          pager.id = pagerId;
+          pager.innerHTML = `
+            <button type="button" data-album-page="first">First</button>
+            <button type="button" data-album-page="prev">&lt;</button>
+            <span data-album-page-status>Albums</span>
+            <button type="button" data-album-page="next">&gt;</button>
+            <button type="button" data-album-page="last">Last</button>
+            <select data-album-page-size aria-label="Albums per page">
+              <option value="50">50</option>
+              <option value="100">100</option>
+              <option value="200">200</option>
+              <option value="500">500</option>
+            </select>
+          `;
+          document.body.append(pager);
+          return pager;
+        };
+
+        const updatePager = (detail) => {
+          const pager = getPager();
+          if (!pager || !detail) {
+            return;
+          }
+
+          const { page, pageSize, total, pageCount } = detail;
+          const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
+          const end = Math.min(total, page * pageSize);
+          pager.hidden = total <= pageSize;
+          pager.querySelector('[data-album-page-status]').textContent = `Albums ${start}-${end} of ${total} - page ${page}/${pageCount}`;
+          pager.querySelector('[data-album-page="first"]').disabled = page <= 1;
+          pager.querySelector('[data-album-page="prev"]').disabled = page <= 1;
+          pager.querySelector('[data-album-page="next"]').disabled = page >= pageCount;
+          pager.querySelector('[data-album-page="last"]').disabled = page >= pageCount;
+          pager.querySelector('[data-album-page-size]').value = String(pageSize);
+        };
+
+        const installPagerStyles = () => {
+          if (document.getElementById('immich-album-pager-style')) {
+            return;
+          }
+
+          const style = document.createElement('style');
+          style.id = 'immich-album-pager-style';
+          style.textContent = `
+            #immich-album-pager {
+              position: fixed;
+              left: 50%;
+              bottom: 18px;
+              z-index: 2147483646;
+              display: flex;
+              align-items: center;
+              gap: 8px;
+              max-width: calc(100vw - 140px);
+              padding: 8px 10px;
+              border: 1px solid rgba(148, 163, 184, .45);
+              border-radius: 999px;
+              background: rgba(255, 255, 255, .96);
+              color: #111827;
+              box-shadow: 0 8px 22px rgba(15, 23, 42, .18);
+              font: 600 13px/1 system-ui, -apple-system, Segoe UI, sans-serif;
+              transform: translateX(-50%);
+            }
+
+            .dark #immich-album-pager {
+              border-color: rgba(71, 85, 105, .8);
+              background: rgba(17, 24, 39, .96);
+              color: #f8fafc;
+            }
+
+            #immich-album-pager button,
+            #immich-album-pager select {
+              height: 30px;
+              border: 1px solid rgba(148, 163, 184, .5);
+              border-radius: 999px;
+              background: transparent;
+              color: inherit;
+              padding: 0 10px;
+              font: inherit;
+            }
+
+            #immich-album-pager button:not(:disabled) {
+              cursor: pointer;
+            }
+
+            #immich-album-pager button:disabled {
+              opacity: .45;
+            }
+
+            #immich-album-pager span {
+              white-space: nowrap;
+            }
+          `;
+          document.head.append(style);
+        };
+
+        const updateForCurrentRoute = () => {
+          if (!isAlbumsPage()) {
+            removePager();
+          }
+        };
+
+        installPagerStyles();
+
+        document.addEventListener('click', (event) => {
+          const button = event.target.closest?.('[data-album-page]');
+          if (!button || !window.__immichAlbumPager) {
+            return;
+          }
+
+          const { page, pageCount } = window.__immichAlbumPager;
+          const action = button.dataset.albumPage;
+          if (action === 'first') {
+            window.__immichAlbumPager.setPage(1);
+          } else if (action === 'prev') {
+            window.__immichAlbumPager.setPage(page - 1);
+          } else if (action === 'next') {
+            window.__immichAlbumPager.setPage(page + 1);
+          } else if (action === 'last') {
+            window.__immichAlbumPager.setPage(pageCount);
+          }
+        });
+
+        document.addEventListener('change', (event) => {
+          const select = event.target.closest?.('[data-album-page-size]');
+          if (select && window.__immichAlbumPager) {
+            window.__immichAlbumPager.setPageSize(select.value);
+          }
+        });
+
+        window.addEventListener('immich-album-pager-update', (event) => updatePager(event.detail));
+        window.addEventListener('popstate', updateForCurrentRoute);
+
+        const originalPushState = history.pushState;
+        history.pushState = function (...args) {
+          const result = originalPushState.apply(this, args);
+          setTimeout(updateForCurrentRoute, 0);
+          return result;
+        };
+
+        const originalReplaceState = history.replaceState;
+        history.replaceState = function (...args) {
+          const result = originalReplaceState.apply(this, args);
+          setTimeout(updateForCurrentRoute, 0);
+          return result;
+        };
+      })();
+    </script>
     <a
       href="http://localhost:2299/"
       target="_blank"
