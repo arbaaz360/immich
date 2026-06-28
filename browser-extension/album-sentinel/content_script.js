@@ -72,6 +72,136 @@ function blobToDataUrl(blob) {
   });
 }
 
+function immichPhotoAssetId() {
+  return window.location.pathname.match(/\/photos\/([0-9a-fA-F-]{36})$/)?.[1] || "";
+}
+
+function largestVisibleImmichImage(assetId) {
+  const candidates = Array.from(document.images || [])
+    .filter((image) => {
+      const src = image.currentSrc || image.src || "";
+      if (!src) {
+        return false;
+      }
+
+      return src.includes(assetId) || src.includes("/api/assets/");
+    })
+    .map((image) => {
+      const rect = image.getBoundingClientRect();
+      return {
+        image,
+        area: Math.max(0, rect.width) * Math.max(0, rect.height)
+      };
+    })
+    .filter(({ area }) => area > 10000)
+    .sort((a, b) => b.area - a.area);
+
+  return candidates[0]?.image || null;
+}
+
+function absoluteUrl(url) {
+  return new URL(url, window.location.origin).href;
+}
+
+async function imagePayloadForImmichPhoto() {
+  const assetId = immichPhotoAssetId();
+  if (!assetId) {
+    throw new Error("This is not an Immich photo page.");
+  }
+
+  const displayedImage = largestVisibleImmichImage(assetId);
+  const displayedUrl = displayedImage ? (displayedImage.currentSrc || displayedImage.src || "") : "";
+  const originalUrl = absoluteUrl(`/api/assets/${assetId}/original`);
+
+  if (displayedUrl?.startsWith("blob:") || displayedUrl?.startsWith("data:")) {
+    const response = await fetch(displayedUrl);
+    return {
+      imageUrl: originalUrl,
+      dataUrl: await blobToDataUrl(await response.blob())
+    };
+  }
+
+  try {
+    const response = await fetch(originalUrl, {
+      credentials: "include",
+      cache: "no-store"
+    });
+    if (response.ok) {
+      return {
+        imageUrl: originalUrl,
+        dataUrl: await blobToDataUrl(await response.blob())
+      };
+    }
+  } catch {
+    // Fall back to extension-side fetch below.
+  }
+
+  return {
+    imageUrl: originalUrl || absoluteUrl(displayedUrl)
+  };
+}
+
+function setImmichCopyStatus(button, text, timeout = 0) {
+  button.textContent = text;
+  if (timeout) {
+    window.setTimeout(() => {
+      if (immichPhotoAssetId()) {
+        button.textContent = "Copy image";
+      }
+    }, timeout);
+  }
+}
+
+async function copyImmichImageWithExtension(button) {
+  const payload = await imagePayloadForImmichPhoto();
+  const response = await chrome.runtime.sendMessage({
+    type: "COPY_IMAGE_TO_CLIPBOARD",
+    ...payload
+  });
+
+  if (!response?.ok) {
+    throw new Error(response?.error || "Image copy failed.");
+  }
+}
+
+function enhanceImmichCopyButton() {
+  const assetId = immichPhotoAssetId();
+  const button = document.getElementById("immich-copy-original-image-button");
+  if (!assetId || !button || button.dataset.albumSentinelCopyBound === "true") {
+    return;
+  }
+
+  button.dataset.albumSentinelCopyBound = "true";
+  button.textContent = "Copy image";
+  button.title = "Copy this image using Album Sentinel";
+  button.addEventListener("click", async (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    event.stopImmediatePropagation();
+
+    button.disabled = true;
+    setImmichCopyStatus(button, "Copying...");
+    try {
+      await copyImmichImageWithExtension(button);
+      setImmichCopyStatus(button, "Copied", 1400);
+    } catch (error) {
+      console.error(error);
+      setImmichCopyStatus(button, "Copy failed", 2500);
+    } finally {
+      button.disabled = false;
+    }
+  }, true);
+}
+
+function scheduleImmichEnhancement() {
+  window.setTimeout(enhanceImmichCopyButton, 100);
+}
+
+const immichObserver = new MutationObserver(scheduleImmichEnhancement);
+immichObserver.observe(document.documentElement, { childList: true, subtree: true });
+window.addEventListener("popstate", scheduleImmichEnhancement);
+scheduleImmichEnhancement();
+
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === "GET_INSTAGRAM_USERNAME") {
     sendResponse({ username: extractUsernameFromDom() });

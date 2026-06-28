@@ -2,6 +2,7 @@ const REVERSE_FACE_SEARCH_URL = "http://localhost:2299/";
 const MENU_ID = "album-sentinel-reverse-face-search";
 const IMAGE_REQUEST_PREFIX = "albumSentinelImageRequest:";
 const LAST_IMAGE_PREFIX = "albumSentinelLastImage:";
+const OFFSCREEN_DOCUMENT = "offscreen.html";
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
@@ -11,7 +12,14 @@ chrome.runtime.onInstalled.addListener(() => {
   });
 });
 
-chrome.runtime.onMessage.addListener((message, sender) => {
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message?.type === "COPY_IMAGE_TO_CLIPBOARD") {
+    copyImageToClipboard(message)
+      .then(() => sendResponse({ ok: true }))
+      .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
+    return true;
+  }
+
   if (message?.type !== "RIGHT_CLICKED_IMAGE" || !sender.tab?.id || !message.image) {
     return false;
   }
@@ -25,6 +33,47 @@ chrome.runtime.onMessage.addListener((message, sender) => {
 
   return false;
 });
+
+async function hasOffscreenDocument() {
+  if (!chrome.runtime.getContexts) {
+    return false;
+  }
+
+  const contexts = await chrome.runtime.getContexts({
+    contextTypes: ["OFFSCREEN_DOCUMENT"],
+    documentUrls: [chrome.runtime.getURL(OFFSCREEN_DOCUMENT)]
+  });
+  return contexts.length > 0;
+}
+
+async function ensureOffscreenDocument() {
+  if (await hasOffscreenDocument()) {
+    return;
+  }
+
+  await chrome.offscreen.createDocument({
+    url: OFFSCREEN_DOCUMENT,
+    reasons: ["CLIPBOARD"],
+    justification: "Copy Immich images to the clipboard from a one-click page button."
+  });
+}
+
+async function copyImageToClipboard({ imageUrl, dataUrl }) {
+  if (!imageUrl && !dataUrl) {
+    throw new Error("No image URL was provided.");
+  }
+
+  await ensureOffscreenDocument();
+  const response = await chrome.runtime.sendMessage({
+    type: "OFFSCREEN_COPY_IMAGE",
+    imageUrl,
+    dataUrl
+  });
+
+  if (!response?.ok) {
+    throw new Error(response?.error || "Image copy failed.");
+  }
+}
 
 async function getStoredRightClickImage(tabId) {
   if (!tabId) {

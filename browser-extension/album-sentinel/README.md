@@ -37,6 +37,12 @@ The extension opens a search tab, downloads the clicked image, and submits it to
 
 If the image is a browser-only `blob:` image, the extension captures the image data from the page before opening the search tab. Normal `http` and `https` images are downloaded by the extension tab and submitted to the reverse face search service as an upload.
 
+### One-Click Copy From Immich
+
+When this extension is loaded, Immich photo pages enhance the `Copy image` button to copy the current image through the extension's `clipboardWrite` permission. This works on `localhost` and `samurai.local`, including pages where normal page JavaScript cannot access image clipboard writes.
+
+After updating this extension, open `chrome://extensions/` or `brave://extensions/` and click reload on Album Sentinel so the new clipboard permission is active.
+
 ## API Keys
 
 API keys are intentionally not committed. Enter them in the extension popup, or fill local preset values in `popup.js` in your private unpacked copy.
