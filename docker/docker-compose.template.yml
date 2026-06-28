@@ -103,6 +103,34 @@ services:
     ports:
       - "2299:2299"
 
+  immich-profile-picture-picker:
+    build:
+      context: C:/Immich/profile-picture-picker
+    container_name: immich-profile-picture-picker
+    restart: unless-stopped
+    depends_on:
+      - database
+    environment:
+      - IMMICH_PROFILE_PICKER_DOCKER=1
+      - IMMICH_PUBLIC_URL=auto
+      - PROFILE_PICKER_HOST=0.0.0.0
+      - PROFILE_PICKER_PORT=3111
+      - PROFILE_PICKER_TOP_PER_ALBUM=5
+      - PROFILE_PICKER_PRESELECT_PER_ALBUM=80
+      - DB_HOSTNAME=database
+      - DB_PORT=5432
+      - DB_USERNAME=postgres
+      - DB_PASSWORD=${IMMICH_DB_PASSWORD:-postgres}
+      - DB_DATABASE_NAME=immich
+      - LM_STUDIO_MODEL=${LM_STUDIO_MODEL:-}
+      - LM_STUDIO_URL=${LM_STUDIO_URL:-http://host.docker.internal:1234/v1/chat/completions}
+    volumes:
+      - X:/Immich/uploads:/data:ro
+      - X:/Immich/uploads/library:/external:ro
+      - C:/Immich/profile-picture-picker-runs:/app/profile_picture_service_runs
+    ports:
+      - "3111:3111"
+
   database:
     image: ghcr.io/immich-app/postgres:14-vectorchord0.4.3-pgvectors0.2.0
     container_name: immich-db

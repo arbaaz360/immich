@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+profile_picture_runs/
+profile_picture_service_runs/
+deepface_facecrop_test/
+deepface_facecrop_compare_*/
+facebox_original_verify_*/

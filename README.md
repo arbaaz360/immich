@@ -24,6 +24,9 @@ It intentionally does not store databases, Redis data, thumbnails, model cache, 
 - Reverse face search runs as a Docker Compose service on `http://localhost:2299/`.
 - Immich web has a small `Face` button that opens reverse face search in a new tab.
 - Reverse face search can upload a query image, extract an Immich face embedding, and search the local `face_search` table.
+- Profile picture picker runs as a Docker Compose service on `http://localhost:3111/` and `http://samurai.local:3111/`.
+- Immich album cards have a `Pick cover` button that opens the picker for that album.
+- The picker ranks image assets by visible face plus upper-body framing, shows the top 5 candidates, and can set the selected asset as the album cover.
 
 ## Restore After C Drive Format
 
@@ -36,7 +39,7 @@ It intentionally does not store databases, Redis data, thumbnails, model cache, 
 powershell -ExecutionPolicy Bypass -File .\setup\Restore-LocalImmichSetup.ps1
 ```
 
-5. Copy `.env.example` to `X:\Immich\.env` and fill in the real Immich API keys if you want the folder album creator containers and thumbnail proxy helper.
+5. Copy `.env.example` to `X:\Immich\.env` and fill in the real Immich API keys if you want the folder album creator containers and thumbnail proxy helper. Optionally set `LM_STUDIO_MODEL` if you want the profile picker to ask LM Studio to review the top candidates.
 6. Start Immich:
 
 ```powershell
@@ -70,6 +73,38 @@ For thumbnail previews on the result page, provide an Immich API key in one of t
 - A local `X:\Immich\docker-compose.yml` containing folder album creator `API_KEY` values
 
 The helper only reads Immich data and does not modify the database.
+
+## Profile Picture Picker
+
+It starts with Docker Compose as `immich-profile-picture-picker`.
+
+Open it directly with:
+
+```text
+http://localhost:3111/
+http://samurai.local:3111/
+```
+
+Or click `Pick cover` on an album card in Immich. The picker:
+
+- Reads existing Immich face boxes from Postgres.
+- Opens only shortlisted original image files from `/data` or `/external`.
+- Prefers clear album-cover framing with face plus upper body/chest, not tight mugshot crops.
+- Shows top 5 candidates.
+- Updates `album.albumThumbnailAssetId` when you click `Set as cover`.
+
+Generated service crops and CSVs are stored in:
+
+```text
+C:\Immich\profile-picture-picker-runs
+```
+
+If LM Studio is running on the host, set these in `X:\Immich\.env`:
+
+```text
+LM_STUDIO_MODEL=qwen2-vl-7b-instruct
+LM_STUDIO_URL=http://host.docker.internal:1234/v1/chat/completions
+```
 
 ## Important
 

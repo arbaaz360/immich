@@ -378,5 +378,70 @@
       style="position:fixed;right:18px;bottom:18px;z-index:2147483647;display:inline-flex;align-items:center;justify-content:center;width:48px;height:36px;border-radius:999px;background:#2563eb;color:#fff;text-decoration:none;font:700 13px/1 system-ui,-apple-system,Segoe UI,sans-serif;box-shadow:0 8px 22px rgba(15,23,42,.28)"
       aria-label="Open reverse face search"
     >Face</a>
+    <script>
+      (() => {
+        const pickerBase = `${location.protocol}//${location.hostname}:3111`;
+        const albumPattern = /^\/albums\/([0-9a-fA-F-]{36})$/;
+
+        const addPickCoverButtons = () => {
+          document.querySelectorAll('a[href^="/albums/"], a[href^="http://localhost:2283/albums/"]').forEach((link) => {
+            const href = new URL(link.getAttribute('href'), location.origin);
+            const match = href.pathname.match(albumPattern);
+            if (!match || link.querySelector('[data-profile-cover-picker]')) {
+              return;
+            }
+
+            const albumId = match[1];
+            const button = document.createElement('button');
+            button.type = 'button';
+            button.dataset.profileCoverPicker = 'true';
+            button.textContent = 'Pick cover';
+            button.title = 'Find profile-style cover candidates';
+            button.style.cssText = [
+              'position:absolute',
+              'right:10px',
+              'top:10px',
+              'z-index:20',
+              'padding:6px 9px',
+              'border:1px solid rgba(15,23,42,.18)',
+              'border-radius:6px',
+              'background:#ffffff',
+              'color:#172033',
+              'font:700 12px/1.2 system-ui,-apple-system,Segoe UI,sans-serif',
+              'box-shadow:0 6px 16px rgba(15,23,42,.18)',
+              'cursor:pointer'
+            ].join(';');
+            button.addEventListener('click', (event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              window.open(`${pickerBase}/album/${albumId}`, '_blank', 'noopener,noreferrer');
+            });
+
+            const position = getComputedStyle(link).position;
+            if (position === 'static') {
+              link.style.position = 'relative';
+            }
+            link.appendChild(button);
+          });
+        };
+
+        const observer = new MutationObserver(addPickCoverButtons);
+        observer.observe(document.documentElement, { childList: true, subtree: true });
+        addPickCoverButtons();
+        window.addEventListener('popstate', () => setTimeout(addPickCoverButtons, 50));
+        const originalPushState = history.pushState;
+        history.pushState = function (...args) {
+          const result = originalPushState.apply(this, args);
+          setTimeout(addPickCoverButtons, 50);
+          return result;
+        };
+        const originalReplaceState = history.replaceState;
+        history.replaceState = function (...args) {
+          const result = originalReplaceState.apply(this, args);
+          setTimeout(addPickCoverButtons, 50);
+          return result;
+        };
+      })();
+    </script>
   </body>
 </html>
