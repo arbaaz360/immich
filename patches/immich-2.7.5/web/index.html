@@ -382,49 +382,253 @@
       (() => {
         const pickerBase = `${location.protocol}//${location.hostname}:3111`;
         const albumPattern = /^\/albums\/([0-9a-fA-F-]{36})$/;
+        const tooltipId = 'immich-profile-cover-tooltip';
+        const candidateCache = new Map();
+        let activeAlbumId = '';
+        let hideTimer = 0;
 
-        const addPickCoverButtons = () => {
-          document.querySelectorAll('a[href^="/albums/"], a[href^="http://localhost:2283/albums/"]').forEach((link) => {
+        const albumIdFromLink = (link) => {
+          try {
             const href = new URL(link.getAttribute('href'), location.origin);
             const match = href.pathname.match(albumPattern);
-            if (!match || link.querySelector('[data-profile-cover-picker]')) {
-              return;
+            return match?.[1] || '';
+          } catch {
+            return '';
+          }
+        };
+
+        const installPickerStyles = () => {
+          if (document.getElementById('immich-profile-cover-picker-style')) {
+            return;
+          }
+
+          const style = document.createElement('style');
+          style.id = 'immich-profile-cover-picker-style';
+          style.textContent = `
+            #immich-profile-cover-tooltip {
+              position: fixed;
+              z-index: 2147483647;
+              display: none;
+              width: min(520px, calc(100vw - 24px));
+              max-height: min(540px, calc(100vh - 24px));
+              overflow: auto;
+              padding: 10px;
+              border: 1px solid rgba(148, 163, 184, .45);
+              border-radius: 8px;
+              background: rgba(255, 255, 255, .98);
+              color: #111827;
+              box-shadow: 0 16px 42px rgba(15, 23, 42, .28);
+              font: 500 12px/1.35 system-ui, -apple-system, Segoe UI, sans-serif;
             }
 
-            const albumId = match[1];
+            .dark #immich-profile-cover-tooltip {
+              border-color: rgba(71, 85, 105, .8);
+              background: rgba(17, 24, 39, .98);
+              color: #f8fafc;
+            }
+
+            #immich-profile-cover-tooltip strong {
+              display: block;
+              margin: 0 0 8px;
+              font-size: 13px;
+            }
+
+            #immich-profile-cover-tooltip .profile-cover-grid {
+              display: grid;
+              grid-template-columns: repeat(5, minmax(0, 1fr));
+              gap: 8px;
+            }
+
+            #immich-profile-cover-tooltip button {
+              min-width: 0;
+              padding: 0;
+              border: 1px solid rgba(148, 163, 184, .45);
+              border-radius: 7px;
+              background: transparent;
+              color: inherit;
+              cursor: pointer;
+              overflow: hidden;
+              text-align: left;
+            }
+
+            #immich-profile-cover-tooltip img {
+              display: block;
+              width: 100%;
+              aspect-ratio: 4 / 5;
+              object-fit: cover;
+              object-position: center top;
+              background: #e5e7eb;
+            }
+
+            #immich-profile-cover-tooltip span {
+              display: block;
+              padding: 5px 6px;
+              white-space: nowrap;
+              overflow: hidden;
+              text-overflow: ellipsis;
+            }
+
+            #immich-profile-cover-tooltip .profile-cover-status {
+              margin-top: 8px;
+              color: #2563eb;
+            }
+          `;
+          document.head.append(style);
+        };
+
+        const getTooltip = () => {
+          let tooltip = document.getElementById(tooltipId);
+          if (tooltip) {
+            return tooltip;
+          }
+          tooltip = document.createElement('div');
+          tooltip.id = tooltipId;
+          tooltip.addEventListener('mouseenter', () => clearTimeout(hideTimer));
+          tooltip.addEventListener('mouseleave', scheduleHideTooltip);
+          document.body.append(tooltip);
+          return tooltip;
+        };
+
+        const scheduleHideTooltip = () => {
+          clearTimeout(hideTimer);
+          hideTimer = setTimeout(() => {
+            const tooltip = getTooltip();
+            tooltip.style.display = 'none';
+            activeAlbumId = '';
+          }, 180);
+        };
+
+        const positionTooltip = (tooltip, anchor) => {
+          const rect = anchor.getBoundingClientRect();
+          const margin = 12;
+          const width = Math.min(520, window.innerWidth - margin * 2);
+          const left = Math.max(margin, Math.min(window.innerWidth - width - margin, rect.left));
+          const topBelow = rect.bottom + 8;
+          const topAbove = rect.top - Math.min(540, window.innerHeight - margin * 2) - 8;
+          const top = topBelow < window.innerHeight - 220 ? topBelow : Math.max(margin, topAbove);
+          tooltip.style.width = `${width}px`;
+          tooltip.style.left = `${left}px`;
+          tooltip.style.top = `${top}px`;
+        };
+
+        const renderCandidates = (tooltip, albumId, payload) => {
+          const candidates = payload.candidates || [];
+          if (!candidates.length) {
+            tooltip.innerHTML = `<strong>${payload.albumName || 'Album cover candidates'}</strong><div>No face candidates found.</div>`;
+            return;
+          }
+
+          tooltip.innerHTML = `
+            <strong>${payload.albumName || 'Album cover candidates'}</strong>
+            <div class="profile-cover-grid"></div>
+            <div class="profile-cover-status">Click a result to set it as cover.</div>
+          `;
+          const grid = tooltip.querySelector('.profile-cover-grid');
+          const status = tooltip.querySelector('.profile-cover-status');
+          candidates.slice(0, 5).forEach((candidate) => {
             const button = document.createElement('button');
             button.type = 'button';
-            button.dataset.profileCoverPicker = 'true';
-            button.textContent = 'Pick cover';
-            button.title = 'Find profile-style cover candidates';
-            button.style.cssText = [
-              'position:absolute',
-              'right:10px',
-              'top:10px',
-              'z-index:20',
-              'padding:6px 9px',
-              'border:1px solid rgba(15,23,42,.18)',
-              'border-radius:6px',
-              'background:#ffffff',
-              'color:#172033',
-              'font:700 12px/1.2 system-ui,-apple-system,Segoe UI,sans-serif',
-              'box-shadow:0 6px 16px rgba(15,23,42,.18)',
-              'cursor:pointer'
-            ].join(';');
-            button.addEventListener('click', (event) => {
+            button.title = `Set #${candidate.rank} as album cover`;
+            button.innerHTML = `
+              <img src="${candidate.cropUrl}" alt="Cover candidate ${candidate.rank}">
+              <span>#${candidate.rank} score ${Number(candidate.score || 0).toFixed(3)}</span>
+            `;
+            button.addEventListener('click', async (event) => {
               event.preventDefault();
               event.stopPropagation();
-              window.open(`${pickerBase}/album/${albumId}`, '_blank', 'noopener,noreferrer');
+              status.textContent = 'Setting cover...';
+              const response = await fetch(`${pickerBase}/api/set-cover?albumId=${albumId}&assetId=${candidate.assetId}`);
+              if (!response.ok) {
+                throw new Error(await response.text());
+              }
+              status.textContent = `Cover set to #${candidate.rank}. Refresh Immich if the old cover is still cached.`;
             });
-
-            const position = getComputedStyle(link).position;
-            if (position === 'static') {
-              link.style.position = 'relative';
-            }
-            link.appendChild(button);
+            grid.append(button);
           });
         };
 
+        const showTooltip = async (link) => {
+          const albumId = albumIdFromLink(link);
+          if (!albumId) {
+            return;
+          }
+          clearTimeout(hideTimer);
+          activeAlbumId = albumId;
+          const tooltip = getTooltip();
+          tooltip.style.display = 'block';
+          tooltip.innerHTML = '<strong>Album cover candidates</strong><div>Loading top 5...</div>';
+          positionTooltip(tooltip, link);
+
+          try {
+            const payload = candidateCache.get(albumId) || await fetch(`${pickerBase}/api/album/${albumId}/candidates`).then((response) => {
+              if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+              }
+              return response.json();
+            });
+            candidateCache.set(albumId, payload);
+            if (activeAlbumId === albumId) {
+              renderCandidates(tooltip, albumId, payload);
+              positionTooltip(tooltip, link);
+            }
+          } catch (error) {
+            if (activeAlbumId === albumId) {
+              tooltip.innerHTML = `<strong>Album cover candidates</strong><div>Could not load candidates: ${String(error.message || error)}</div>`;
+            }
+          }
+        };
+
+        const addPickCoverButtons = () => {
+          document.querySelectorAll('a[href^="/albums/"], a[href^="http://localhost:2283/albums/"]').forEach((link) => {
+            const albumId = albumIdFromLink(link);
+            if (!albumId) {
+              return;
+            }
+
+            if (!link.dataset.profileCoverPickerBound) {
+              link.dataset.profileCoverPickerBound = 'true';
+              link.addEventListener('mouseenter', () => showTooltip(link));
+              link.addEventListener('mouseleave', scheduleHideTooltip);
+              link.addEventListener('focusin', () => showTooltip(link));
+              link.addEventListener('focusout', scheduleHideTooltip);
+            }
+
+            if (!link.querySelector('[data-profile-cover-picker]')) {
+              const button = document.createElement('button');
+              button.type = 'button';
+              button.dataset.profileCoverPicker = 'true';
+              button.textContent = 'Pick cover';
+              button.title = 'Find profile-style cover candidates';
+              button.style.cssText = [
+                'position:absolute',
+                'right:10px',
+                'top:10px',
+                'z-index:20',
+                'padding:6px 9px',
+                'border:1px solid rgba(15,23,42,.18)',
+                'border-radius:6px',
+                'background:#ffffff',
+                'color:#172033',
+                'font:700 12px/1.2 system-ui,-apple-system,Segoe UI,sans-serif',
+                'box-shadow:0 6px 16px rgba(15,23,42,.18)',
+                'cursor:pointer'
+              ].join(';');
+              button.addEventListener('click', (event) => {
+                event.preventDefault();
+                event.stopPropagation();
+                window.open(`${pickerBase}/album/${albumId}`, '_blank', 'noopener,noreferrer');
+              });
+
+              const position = getComputedStyle(link).position;
+              if (position === 'static') {
+                link.style.position = 'relative';
+              }
+              link.appendChild(button);
+            }
+          });
+        };
+
+        installPickerStyles();
         const observer = new MutationObserver(addPickCoverButtons);
         observer.observe(document.documentElement, { childList: true, subtree: true });
         addPickCoverButtons();

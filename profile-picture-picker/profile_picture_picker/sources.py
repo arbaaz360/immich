@@ -138,6 +138,94 @@ copy (
         rows = self._copy_rows(sql)
         return rows[0] if rows else None
 
+    def list_albums_for_prefix(self, folder: str | Path) -> list[dict[str, str]]:
+        prefix = host_to_container_prefix(folder).rstrip("/") + "/"
+        folder_rows = self._direct_child_folder_rows(prefix.rstrip("/"))
+        if folder_rows:
+            return self._list_albums_for_folder_rows(folder_rows)
+
+        sql = f"""
+copy (
+  select
+    al.id::text as id,
+    al."albumName" as album_name,
+    coalesce(al."albumThumbnailAssetId"::text, '') as thumbnail_asset_id,
+    count(distinct a.id) filter (where a.type = 'IMAGE') as image_count,
+    count(distinct af.id) as face_count
+  from album al
+  join album_asset aa on aa."albumId" = al.id
+  join asset a on a.id = aa."assetId"
+  left join asset_face af
+    on af."assetId" = a.id
+   and af."deletedAt" is null
+   and coalesce(af."isVisible", true) is true
+  where al."deletedAt" is null
+    and a."deletedAt" is null
+    and a.status = 'active'
+    and a."originalPath" like {sql_literal(prefix + '%')}
+  group by al.id, al."albumName", al."albumThumbnailAssetId"
+  having count(distinct a.id) filter (where a.type = 'IMAGE') > 0
+  order by al."albumName"
+) to stdout with csv header
+"""
+        return self._copy_rows(sql)
+
+    def _direct_child_folder_rows(self, container_prefix: str) -> list[dict[str, str]]:
+        root = container_to_host_path(container_prefix)
+        if not root.exists() or not root.is_dir():
+            return []
+        rows = []
+        for index, child in enumerate(sorted(root.iterdir(), key=lambda path: path.name.lower()), 1):
+            if child.is_dir():
+                rows.append(
+                    {
+                        "ord": str(index),
+                        "album_name": child.name,
+                        "asset_prefix": container_prefix.rstrip("/") + "/" + child.name,
+                    }
+                )
+        return rows
+
+    def _list_albums_for_folder_rows(self, folder_rows: list[dict[str, str]]) -> list[dict[str, str]]:
+        albums: list[dict[str, str]] = []
+        chunk_size = 400
+        for start in range(0, len(folder_rows), chunk_size):
+            values_sql = ",\n    ".join(
+                f"({row['ord']}, {sql_literal(row['album_name'])}, {sql_literal(row['asset_prefix'])})"
+                for row in folder_rows[start : start + chunk_size]
+            )
+            sql = f"""
+copy (
+  with wanted(ord, album_name, asset_prefix) as (
+    values
+    {values_sql}
+  )
+  select
+    al.id::text as id,
+    al."albumName" as album_name,
+    coalesce(al."albumThumbnailAssetId"::text, '') as thumbnail_asset_id,
+    w.ord::text as folder_order,
+    w.asset_prefix
+  from wanted w
+  join album al on al."albumName" = w.album_name
+  where al."deletedAt" is null
+    and exists (
+      select 1
+      from album_asset aa
+      join asset a on a.id = aa."assetId"
+      where aa."albumId" = al.id
+        and a."deletedAt" is null
+        and a.status = 'active'
+        and a.type = 'IMAGE'
+        and a."originalPath" like w.asset_prefix || '/%'
+      limit 1
+    )
+  order by w.ord, al."albumName"
+) to stdout with csv header
+"""
+            albums.extend(self._copy_rows(sql))
+        return albums
+
     def set_album_cover(self, album_id: str, asset_id: str) -> None:
         sql = f"""
 copy (

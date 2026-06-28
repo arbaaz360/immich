@@ -117,6 +117,7 @@ services:
       - PROFILE_PICKER_PORT=3111
       - PROFILE_PICKER_TOP_PER_ALBUM=5
       - PROFILE_PICKER_PRESELECT_PER_ALBUM=80
+      - PROFILE_PICKER_DEFAULT_LIBRARY_FOLDER=X:\Immich\uploads\library\96e7f049-ce60-47a5-9548-a6ebefd14d85
       - DB_HOSTNAME=database
       - DB_PORT=5432
       - DB_USERNAME=postgres

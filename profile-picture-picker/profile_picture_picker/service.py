@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import html
+import json
 import mimetypes
 import os
 import re
+import threading
+import time
 import urllib.parse
-from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
@@ -33,6 +35,14 @@ LM_STUDIO_MODEL = os.environ.get("LM_STUDIO_MODEL", "").strip()
 LM_STUDIO_URL = os.environ.get("LM_STUDIO_URL", "http://localhost:1234/v1/chat/completions").strip()
 TOP_PER_ALBUM = int(os.environ.get("PROFILE_PICKER_TOP_PER_ALBUM", "5"))
 PRESELECT_PER_ALBUM = int(os.environ.get("PROFILE_PICKER_PRESELECT_PER_ALBUM", "80"))
+DEFAULT_LIBRARY_FOLDER = os.environ.get(
+    "PROFILE_PICKER_DEFAULT_LIBRARY_FOLDER",
+    "X:\\Immich\\uploads\\library\\96e7f049-ce60-47a5-9548-a6ebefd14d85",
+)
+BULK_STATUS_PATH = RUN_ROOT / "bulk_cover_status.json"
+BULK_JOB_LOCK = threading.Lock()
+BULK_JOB_THREAD: threading.Thread | None = None
+BULK_JOB_STATUS: dict = {}
 
 
 class ProfilePickerHandler(BaseHTTPRequestHandler):
@@ -47,6 +57,35 @@ class ProfilePickerHandler(BaseHTTPRequestHandler):
                 self.send_html(index_page())
             elif path == "/health":
                 self.send_text("ok\n")
+            elif path.startswith("/api/album/") and path.endswith("/candidates"):
+                album_id = path.split("/")[3]
+                refresh = query.get("refresh") == ["1"]
+                payload = album_candidates_payload(album_id, self.external_base_url(), refresh=refresh)
+                payload.pop("_ranked", None)
+                payload.pop("_reports", None)
+                self.send_json(payload)
+            elif path == "/api/set-cover":
+                album_id = one(query, "albumId")
+                asset_id = one(query, "assetId")
+                source = ImmichDbSource()
+                source.set_album_cover(album_id, asset_id)
+                self.send_json({"ok": True, "albumId": album_id, "assetId": asset_id})
+            elif path == "/bulk-set-covers":
+                folder = one_or_default(query, "folder", DEFAULT_LIBRARY_FOLDER)
+                limit = int(one_or_default(query, "limit", "0"))
+                dry_run = one_or_default(query, "dryRun", "0") in {"1", "true", "yes"}
+                self.send_html(bulk_set_covers_page(folder, limit=limit, dry_run=dry_run))
+            elif path == "/bulk-start":
+                folder = one_or_default(query, "folder", DEFAULT_LIBRARY_FOLDER)
+                limit = int(one_or_default(query, "limit", "0"))
+                dry_run = one_or_default(query, "dryRun", "0") in {"1", "true", "yes"}
+                start_bulk_job(folder, limit=limit, dry_run=dry_run)
+                self.send_html(bulk_status_page(immich_public_url(self)))
+            elif path == "/bulk-status":
+                if one_or_default(query, "json", "0") == "1":
+                    self.send_json(read_bulk_status())
+                else:
+                    self.send_html(bulk_status_page(immich_public_url(self)))
             elif path.startswith("/album/"):
                 album_id = path.split("/", 2)[2].strip("/")
                 self.send_html(album_page(album_id, immich_public_url(self), refresh=query.get("refresh") == ["1"]))
@@ -61,12 +100,18 @@ class ProfilePickerHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             self.send_html(error_page(exc), status=500)
 
+    def do_OPTIONS(self) -> None:
+        self.send_response(204)
+        self.send_cors_headers()
+        self.end_headers()
+
     def log_message(self, format: str, *args: object) -> None:
         print(f"{self.address_string()} - {format % args}")
 
     def send_html(self, body: str, status: int = 200) -> None:
         data = body.encode("utf-8")
         self.send_response(status)
+        self.send_cors_headers()
         self.send_header("Content-Type", "text/html; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
@@ -75,7 +120,17 @@ class ProfilePickerHandler(BaseHTTPRequestHandler):
     def send_text(self, body: str, status: int = 200) -> None:
         data = body.encode("utf-8")
         self.send_response(status)
+        self.send_cors_headers()
         self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def send_json(self, payload: dict, status: int = 200) -> None:
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(status)
+        self.send_cors_headers()
+        self.send_header("Content-Type", "application/json; charset=utf-8")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
@@ -91,10 +146,21 @@ class ProfilePickerHandler(BaseHTTPRequestHandler):
             return
         data = resolved.read_bytes()
         self.send_response(200)
+        self.send_cors_headers()
         self.send_header("Content-Type", mimetypes.guess_type(str(resolved))[0] or "application/octet-stream")
         self.send_header("Content-Length", str(len(data)))
         self.end_headers()
         self.wfile.write(data)
+
+    def send_cors_headers(self) -> None:
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+
+    def external_base_url(self) -> str:
+        host_header = self.headers.get("Host", "localhost:3111").split(",")[0].strip()
+        scheme = "http"
+        return f"{scheme}://{host_header}".rstrip("/")
 
 
 def album_page(album_id: str, public_immich_url: str, refresh: bool = False) -> str:
@@ -115,8 +181,9 @@ def album_page(album_id: str, public_immich_url: str, refresh: bool = False) -> 
                 except OSError:
                     pass
 
-    ranked = run_album_picker(album_id, out_dir)
-    reports = write_reports(ranked, out_dir, top_per_group=TOP_PER_ALBUM)
+    payload = album_candidates_payload(album_id, "", refresh=refresh)
+    ranked = payload["_ranked"]
+    reports = payload["_reports"]
     top = sorted(ranked, key=lambda c: c.rank_score, reverse=True)[:TOP_PER_ALBUM]
     title = f"Pick cover: {album['albumName']}"
 
@@ -163,7 +230,7 @@ def album_page(album_id: str, public_immich_url: str, refresh: bool = False) -> 
     return layout(title, body)
 
 
-def run_album_picker(album_id: str, out_dir: Path):
+def run_album_picker(album_id: str, out_dir: Path, *, write_outputs: bool = True, use_vlm: bool | None = None):
     source = ImmichDbSource()
     candidates = source.load_faces(album_id=album_id)
     stages = [
@@ -174,15 +241,257 @@ def run_album_picker(album_id: str, out_dir: Path):
         ImageValidationStage(),
         SharpnessStage(),
         RankStage(),
-        CropExportStage(limit_per_group=TOP_PER_ALBUM),
-        ContactSheetStage(top_per_group_count=TOP_PER_ALBUM),
     ]
-    if LM_STUDIO_MODEL:
+    if write_outputs:
+        stages.extend(
+            [
+                CropExportStage(limit_per_group=TOP_PER_ALBUM),
+                ContactSheetStage(top_per_group_count=TOP_PER_ALBUM),
+            ]
+        )
+    if use_vlm is None:
+        use_vlm = write_outputs
+    if use_vlm and LM_STUDIO_MODEL:
         stages.append(OptionalLmStudioVlmStage(LM_STUDIO_MODEL, top_n=min(TOP_PER_ALBUM, 3), endpoint=LM_STUDIO_URL))
     return Pipeline(stages).run(
         candidates,
-        RunContext(out_dir=out_dir, write_crops=True, write_contact_sheets=True),
+        RunContext(out_dir=out_dir, write_crops=write_outputs, write_contact_sheets=write_outputs),
     )
+
+
+def album_candidates_payload(album_id: str, base_url: str, refresh: bool = False) -> dict:
+    validate_uuid(album_id)
+    source = ImmichDbSource()
+    album = source.get_album(album_id)
+    if not album:
+        raise ValueError(f"Album not found: {album_id}")
+    out_dir = RUN_ROOT / album_id
+    if refresh and out_dir.exists():
+        clear_dir(out_dir)
+    ranked = run_album_picker(album_id, out_dir)
+    reports = write_reports(ranked, out_dir, top_per_group=TOP_PER_ALBUM)
+    top = sorted(ranked, key=lambda c: c.rank_score, reverse=True)[:TOP_PER_ALBUM]
+    candidates = []
+    for index, candidate in enumerate(top, 1):
+        crop_path = candidate.output_crop
+        crop_url = file_url(crop_path)
+        if base_url and crop_url:
+            crop_url = base_url + crop_url
+        candidates.append(
+            {
+                "rank": index,
+                "assetId": candidate.asset_id,
+                "faceId": candidate.face_id,
+                "score": round(candidate.rank_score, 6),
+                "fileName": candidate.host_path.name,
+                "cropUrl": crop_url,
+                "flags": candidate.flags,
+                "vlmNote": candidate.vlm_note or "",
+                "metrics": {
+                    "belowFaceRatio": candidate.metrics.get("below_face_ratio"),
+                    "faceHeightRatio": candidate.metrics.get("face_height_ratio"),
+                    "sharpness": candidate.metrics.get("sharpness_laplacian_var"),
+                },
+            }
+        )
+    return {
+        "ok": True,
+        "albumId": album_id,
+        "albumName": album["albumName"],
+        "currentCoverAssetId": album.get("thumbnail_asset_id", ""),
+        "candidates": candidates,
+        "_ranked": ranked,
+        "_reports": reports,
+    }
+
+
+def bulk_set_covers_page(folder: str, limit: int = 0, dry_run: bool = False) -> str:
+    results = bulk_set_covers(folder, limit=limit, dry_run=dry_run)
+    rows = []
+    for item in results["items"]:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(item['albumName'])}</td>"
+            f"<td>{html.escape(item['status'])}</td>"
+            f"<td>{html.escape(item.get('assetId', ''))}</td>"
+            f"<td>{html.escape(item.get('message', ''))}</td>"
+            "</tr>"
+        )
+    body = f"""
+    <p>Folder: <code>{html.escape(folder)}</code></p>
+    <p>Processed {results['processed']} albums; updated {results['updated']}; skipped {results['skipped']}; failed {results['failed']}.</p>
+    <table>
+      <thead><tr><th>Album</th><th>Status</th><th>Asset</th><th>Message</th></tr></thead>
+      <tbody>{''.join(rows)}</tbody>
+    </table>
+    <style>
+      table {{ border-collapse: collapse; width: 100%; background: white; }}
+      th, td {{ border: 1px solid #d8deea; padding: 7px; text-align: left; vertical-align: top; }}
+      th {{ background: #eef2f7; }}
+    </style>
+    """
+    return layout("Bulk cover update", body)
+
+
+def bulk_set_covers(folder: str, limit: int = 0, dry_run: bool = False, progress=None) -> dict:
+    source = ImmichDbSource()
+    albums = source.list_albums_for_prefix(folder)
+    if limit > 0:
+        albums = albums[:limit]
+    if progress:
+        progress({"total": len(albums)})
+    items = []
+    updated = skipped = failed = 0
+    for index, album in enumerate(albums, 1):
+        album_id = album["id"]
+        if progress:
+            progress({"processed": index - 1, "currentAlbum": album.get("album_name", album_id)})
+        try:
+            out_dir = RUN_ROOT / album_id
+            ranked = run_album_picker(album_id, out_dir, write_outputs=False, use_vlm=False)
+            top = sorted(ranked, key=lambda c: c.rank_score, reverse=True)[:1]
+            if not top:
+                skipped += 1
+                item = {"albumName": album["album_name"], "status": "skipped", "message": "no candidates"}
+                items.append(item)
+                if progress:
+                    progress({"processed": index, "skipped": skipped, "item": item})
+                continue
+            asset_id = top[0].asset_id
+            if not dry_run:
+                source.set_album_cover(album_id, asset_id)
+            updated += 1
+            item = {
+                "albumName": album["album_name"],
+                "status": "dry-run" if dry_run else "updated",
+                "assetId": asset_id,
+                "message": f"score={top[0].rank_score:.3f}",
+            }
+            items.append(item)
+            if progress:
+                progress({"processed": index, "updated": updated, "item": item})
+        except Exception as exc:
+            failed += 1
+            item = {"albumName": album.get("album_name", album_id), "status": "failed", "message": str(exc)}
+            items.append(item)
+            if progress:
+                progress({"processed": index, "failed": failed, "item": item})
+    return {
+        "processed": len(albums),
+        "updated": updated,
+        "skipped": skipped,
+        "failed": failed,
+        "items": items,
+    }
+
+
+def start_bulk_job(folder: str, limit: int = 0, dry_run: bool = False) -> dict:
+    global BULK_JOB_THREAD, BULK_JOB_STATUS
+    with BULK_JOB_LOCK:
+        if BULK_JOB_THREAD and BULK_JOB_THREAD.is_alive():
+            return BULK_JOB_STATUS
+        BULK_JOB_STATUS = {
+            "running": True,
+            "done": False,
+            "folder": folder,
+            "limit": limit,
+            "dryRun": dry_run,
+            "startedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+            "finishedAt": "",
+            "total": 0,
+            "processed": 0,
+            "updated": 0,
+            "skipped": 0,
+            "failed": 0,
+            "currentAlbum": "",
+            "error": "",
+            "items": [],
+        }
+        write_bulk_status(BULK_JOB_STATUS)
+        BULK_JOB_THREAD = threading.Thread(target=run_bulk_job, args=(folder, limit, dry_run), daemon=True)
+        BULK_JOB_THREAD.start()
+        return BULK_JOB_STATUS
+
+
+def run_bulk_job(folder: str, limit: int, dry_run: bool) -> None:
+    def progress(update: dict) -> None:
+        with BULK_JOB_LOCK:
+            item = update.pop("item", None)
+            BULK_JOB_STATUS.update(update)
+            if item:
+                BULK_JOB_STATUS.setdefault("items", []).append(item)
+                BULK_JOB_STATUS["items"] = BULK_JOB_STATUS["items"][-200:]
+            write_bulk_status(BULK_JOB_STATUS)
+
+    try:
+        result = bulk_set_covers(folder, limit=limit, dry_run=dry_run, progress=progress)
+        with BULK_JOB_LOCK:
+            BULK_JOB_STATUS.update(result)
+            BULK_JOB_STATUS["running"] = False
+            BULK_JOB_STATUS["done"] = True
+            BULK_JOB_STATUS["currentAlbum"] = ""
+            BULK_JOB_STATUS["finishedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            BULK_JOB_STATUS["items"] = result.get("items", [])[-200:]
+            write_bulk_status(BULK_JOB_STATUS)
+    except Exception as exc:
+        with BULK_JOB_LOCK:
+            BULK_JOB_STATUS["running"] = False
+            BULK_JOB_STATUS["done"] = True
+            BULK_JOB_STATUS["error"] = type(exc).__name__ + ": " + str(exc)
+            BULK_JOB_STATUS["finishedAt"] = time.strftime("%Y-%m-%d %H:%M:%S")
+            write_bulk_status(BULK_JOB_STATUS)
+
+
+def read_bulk_status() -> dict:
+    if BULK_STATUS_PATH.exists():
+        try:
+            return json.loads(BULK_STATUS_PATH.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            pass
+    return {"running": False, "done": False, "items": []}
+
+
+def write_bulk_status(status: dict) -> None:
+    RUN_ROOT.mkdir(parents=True, exist_ok=True)
+    BULK_STATUS_PATH.write_text(json.dumps(status, indent=2), encoding="utf-8")
+
+
+def bulk_status_page(public_immich_url: str) -> str:
+    status = read_bulk_status()
+    rows = []
+    for item in status.get("items", [])[-80:]:
+        rows.append(
+            "<tr>"
+            f"<td>{html.escape(item.get('albumName', ''))}</td>"
+            f"<td>{html.escape(item.get('status', ''))}</td>"
+            f"<td>{html.escape(item.get('assetId', ''))}</td>"
+            f"<td>{html.escape(item.get('message', ''))}</td>"
+            "</tr>"
+        )
+    total = int(status.get("total") or 0)
+    processed = int(status.get("processed") or 0)
+    pct = (processed / total * 100) if total else 0
+    refresh = "<meta http-equiv=\"refresh\" content=\"15\">" if status.get("running") else ""
+    body = f"""
+    {refresh}
+    <p><a class="button" href="{public_immich_url}/albums">Back to Immich albums</a></p>
+    <p>Folder: <code>{html.escape(status.get('folder', ''))}</code></p>
+    <p>Status: <strong>{'running' if status.get('running') else 'finished' if status.get('done') else 'idle'}</strong></p>
+    <p>Processed {processed} / {total} albums ({pct:.1f}%); updated {status.get('updated', 0)}; skipped {status.get('skipped', 0)}; failed {status.get('failed', 0)}.</p>
+    <p>Current: <code>{html.escape(status.get('currentAlbum', ''))}</code></p>
+    <p>Started: {html.escape(status.get('startedAt', ''))} Finished: {html.escape(status.get('finishedAt', ''))}</p>
+    <pre>{html.escape(status.get('error', ''))}</pre>
+    <table>
+      <thead><tr><th>Album</th><th>Status</th><th>Asset</th><th>Message</th></tr></thead>
+      <tbody>{''.join(rows)}</tbody>
+    </table>
+    <style>
+      table {{ border-collapse: collapse; width: 100%; background: white; }}
+      th, td {{ border: 1px solid #d8deea; padding: 7px; text-align: left; vertical-align: top; }}
+      th {{ background: #eef2f7; }}
+    </style>
+    """
+    return layout("Bulk cover status", body)
 
 
 def set_cover_page(album_id: str, asset_id: str, public_immich_url: str) -> str:
@@ -248,6 +557,24 @@ def one(query: dict[str, list[str]], key: str) -> str:
     if not values or not values[0]:
         raise ValueError(f"Missing query parameter: {key}")
     return values[0]
+
+
+def one_or_default(query: dict[str, list[str]], key: str, default: str) -> str:
+    values = query.get(key)
+    if not values or values[0] == "":
+        return default
+    return values[0]
+
+
+def clear_dir(path: Path) -> None:
+    for file in sorted(path.rglob("*"), reverse=True):
+        if file.is_file():
+            file.unlink()
+        elif file.is_dir():
+            try:
+                file.rmdir()
+            except OSError:
+                pass
 
 
 def validate_uuid(value: str) -> None:
