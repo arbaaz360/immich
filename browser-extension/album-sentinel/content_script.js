@@ -72,6 +72,58 @@ function blobToDataUrl(blob) {
   });
 }
 
+function dataUrlToBlob(dataUrl) {
+  return fetch(dataUrl).then((response) => response.blob());
+}
+
+async function blobToPng(blob) {
+  if (blob.type === "image/png") {
+    return blob;
+  }
+
+  const bitmap = await createImageBitmap(blob);
+  try {
+    const canvas = document.createElement("canvas");
+    canvas.width = bitmap.width;
+    canvas.height = bitmap.height;
+    const context = canvas.getContext("2d");
+    if (!context) {
+      throw new Error("Could not create clipboard canvas.");
+    }
+
+    context.drawImage(bitmap, 0, 0);
+    return await new Promise((resolve, reject) => {
+      canvas.toBlob((pngBlob) => {
+        if (pngBlob) {
+          resolve(pngBlob);
+        } else {
+          reject(new Error("Could not convert image for clipboard."));
+        }
+      }, "image/png");
+    });
+  } finally {
+    bitmap.close?.();
+  }
+}
+
+async function fetchImageBlob(imageUrl) {
+  const response = await fetch(imageUrl, {
+    credentials: "include",
+    cache: "no-store"
+  });
+
+  if (!response.ok) {
+    throw new Error(`Could not fetch image: HTTP ${response.status}`);
+  }
+
+  const blob = await response.blob();
+  if (!blob.type.startsWith("image/")) {
+    throw new Error(`Fetched resource is not an image: ${blob.type || "unknown type"}`);
+  }
+
+  return blob;
+}
+
 function immichPhotoAssetId() {
   return window.location.pathname.match(/\/photos\/([0-9a-fA-F-]{36})$/)?.[1] || "";
 }
@@ -153,6 +205,18 @@ function setImmichCopyStatus(button, text, timeout = 0) {
 }
 
 async function copyImmichImageWithExtension(button) {
+  if (navigator.clipboard?.write && window.ClipboardItem) {
+    return navigator.clipboard.write([
+      new ClipboardItem({
+        "image/png": (async () => {
+          const payload = await imagePayloadForImmichPhoto();
+          const sourceBlob = payload.dataUrl ? await dataUrlToBlob(payload.dataUrl) : await fetchImageBlob(payload.imageUrl);
+          return blobToPng(sourceBlob);
+        })()
+      })
+    ]);
+  }
+
   const payload = await imagePayloadForImmichPhoto();
   const response = await chrome.runtime.sendMessage({
     type: "COPY_IMAGE_TO_CLIPBOARD",
