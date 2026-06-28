@@ -157,7 +157,7 @@ services:
   # ----- Folder → Album creators (one per user) -----
 
   immich-folder-album-creator-arbaaz:
-    image: salvoxia/immich-folder-album-creator:latest
+    image: salvoxia/immich-folder-album-creator@sha256:79b82f9818ded34c8dcfc5df0502126fdaff698b94ddad4b20ac1f0c3a7dcba2
     container_name: immich-folder-album-creator-arbaaz
     restart: unless-stopped
     depends_on:
@@ -175,7 +175,7 @@ services:
       TZ: "Asia/Kolkata"
 
   immich-folder-album-creator-realfire2023:
-    image: salvoxia/immich-folder-album-creator:latest
+    image: salvoxia/immich-folder-album-creator@sha256:79b82f9818ded34c8dcfc5df0502126fdaff698b94ddad4b20ac1f0c3a7dcba2
     container_name: immich-folder-album-creator-realfire2023
     restart: unless-stopped
     depends_on:
@@ -193,7 +193,7 @@ services:
       TZ: "Asia/Kolkata"
 
   immich-folder-album-creator-firereal06:
-    image: salvoxia/immich-folder-album-creator:latest
+    image: salvoxia/immich-folder-album-creator@sha256:79b82f9818ded34c8dcfc5df0502126fdaff698b94ddad4b20ac1f0c3a7dcba2
     container_name: immich-folder-album-creator-firereal06
     restart: unless-stopped
     depends_on:

@@ -13,6 +13,10 @@ It intentionally does not store databases, Redis data, thumbnails, model cache, 
 - Immich compose directory: `X:\Immich`
 - Original media: `X:\Immich\uploads\library` and `E:\` mounted read-only as `/mnt/e`
 
+## Update Policy
+
+This setup is intentionally pinned. Immich server and ML images use `v2.7.5`, and helper images are pinned instead of using floating `latest` tags. Do not run `docker compose pull` unless you are intentionally upgrading and re-checking the local patches.
+
 ## Local Behavior Captured Here
 
 - Photo detail view uses originals for `size=preview` image requests.
