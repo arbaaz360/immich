@@ -3,6 +3,8 @@ const MENU_ID = "album-sentinel-reverse-face-search";
 const IMAGE_REQUEST_PREFIX = "albumSentinelImageRequest:";
 const LAST_IMAGE_PREFIX = "albumSentinelLastImage:";
 const OFFSCREEN_DOCUMENT = "offscreen.html";
+const CLIPBOARD_REQUEST_PREFIX = "albumSentinelClipboardRequest:";
+const pendingClipboardCopies = new Map();
 
 chrome.runtime.onInstalled.addListener(() => {
   chrome.contextMenus.create({
@@ -18,6 +20,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       .then(() => sendResponse({ ok: true }))
       .catch((error) => sendResponse({ ok: false, error: String(error?.message || error) }));
     return true;
+  }
+
+  if (message?.type === "CLIPBOARD_COPY_RESULT") {
+    const pending = pendingClipboardCopies.get(message.requestId);
+    if (pending) {
+      pendingClipboardCopies.delete(message.requestId);
+      clearTimeout(pending.timeoutId);
+      if (message.ok) {
+        pending.resolve();
+      } else {
+        pending.reject(new Error(message.error || "Image copy failed."));
+      }
+    }
+    return false;
   }
 
   if (message?.type !== "RIGHT_CLICKED_IMAGE" || !sender.tab?.id || !message.image) {
@@ -63,6 +79,36 @@ async function copyImageToClipboard({ imageUrl, dataUrl }) {
     throw new Error("No image URL was provided.");
   }
 
+  const requestId = `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  await chrome.storage.local.set({
+    [`${CLIPBOARD_REQUEST_PREFIX}${requestId}`]: {
+      imageUrl,
+      dataUrl,
+      createdAt: Date.now()
+    }
+  });
+
+  const copyPromise = new Promise((resolve, reject) => {
+    const timeoutId = setTimeout(() => {
+      pendingClipboardCopies.delete(requestId);
+      reject(new Error("Clipboard copy timed out."));
+    }, 15000);
+
+    pendingClipboardCopies.set(requestId, { resolve, reject, timeoutId });
+  });
+
+  await chrome.windows.create({
+    url: chrome.runtime.getURL(`clipboard.html?id=${encodeURIComponent(requestId)}`),
+    type: "popup",
+    focused: true,
+    width: 320,
+    height: 180
+  });
+
+  await copyPromise;
+}
+
+async function copyImageToClipboardOffscreen({ imageUrl, dataUrl }) {
   await ensureOffscreenDocument();
   const response = await chrome.runtime.sendMessage({
     type: "OFFSCREEN_COPY_IMAGE",
