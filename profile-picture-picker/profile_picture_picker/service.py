@@ -60,7 +60,10 @@ class ProfilePickerHandler(BaseHTTPRequestHandler):
             elif path.startswith("/api/album/") and path.endswith("/candidates"):
                 album_id = path.split("/")[3]
                 refresh = query.get("refresh") == ["1"]
-                payload = album_candidates_payload(album_id, self.external_base_url(), refresh=refresh)
+                if one_or_default(query, "fast", "0") in {"1", "true", "yes"}:
+                    payload = fast_album_candidates_payload(album_id)
+                else:
+                    payload = album_candidates_payload(album_id, self.external_base_url(), refresh=refresh)
                 payload.pop("_ranked", None)
                 payload.pop("_reports", None)
                 self.send_json(payload)
@@ -303,6 +306,70 @@ def album_candidates_payload(album_id: str, base_url: str, refresh: bool = False
         "_ranked": ranked,
         "_reports": reports,
     }
+
+
+def fast_album_candidates_payload(album_id: str) -> dict:
+    validate_uuid(album_id)
+    source = ImmichDbSource()
+    album = source.get_album(album_id)
+    if not album:
+        raise ValueError(f"Album not found: {album_id}")
+
+    current_cover = album.get("thumbnail_asset_id", "")
+    ranked = run_album_picker_fast(album_id)
+    by_asset: dict[str, object] = {}
+    for candidate in sorted(ranked, key=lambda c: c.rank_score, reverse=True):
+        by_asset.setdefault(candidate.asset_id, candidate)
+
+    selected = []
+    if current_cover and current_cover in by_asset:
+        selected.append(by_asset.pop(current_cover))
+    selected.extend(list(by_asset.values())[: max(0, TOP_PER_ALBUM - len(selected))])
+
+    candidates = []
+    for index, candidate in enumerate(selected[:TOP_PER_ALBUM], 1):
+        candidates.append(
+            {
+                "rank": index,
+                "assetId": candidate.asset_id,
+                "faceId": candidate.face_id,
+                "score": round(candidate.rank_score, 6),
+                "fileName": candidate.host_path.name,
+                "thumbnailUrl": f"/api/assets/{candidate.asset_id}/thumbnail?size=thumbnail",
+                "flags": candidate.flags,
+                "vlmNote": "",
+                "metrics": {
+                    "belowFaceRatio": candidate.metrics.get("below_face_ratio"),
+                    "faceHeightRatio": candidate.metrics.get("face_height_ratio"),
+                    "sharpness": "",
+                },
+            }
+        )
+
+    return {
+        "ok": True,
+        "fast": True,
+        "albumId": album_id,
+        "albumName": album["albumName"],
+        "currentCoverAssetId": current_cover,
+        "candidates": candidates,
+    }
+
+
+def run_album_picker_fast(album_id: str):
+    source = ImmichDbSource()
+    candidates = source.load_faces(album_id=album_id)
+    stages = [
+        GroupStage("all"),
+        FaceGeometryStage(),
+        RankStage(),
+        PreselectStage(TOP_PER_ALBUM * 5),
+        RankStage(),
+    ]
+    return Pipeline(stages).run(
+        candidates,
+        RunContext(out_dir=RUN_ROOT / album_id / "fast", write_crops=False, write_contact_sheets=False),
+    )
 
 
 def bulk_set_covers_page(folder: str, limit: int = 0, dry_run: bool = False) -> str:

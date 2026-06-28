@@ -29,7 +29,7 @@ This setup is intentionally pinned. Immich server and ML images use `v2.7.5`, an
 - Immich web has a small `Face` button that opens reverse face search in a new tab.
 - Reverse face search can upload a query image, extract an Immich face embedding, and search the local `face_search` table.
 - Profile picture picker runs as a Docker Compose service on `http://localhost:3111/` and `http://samurai.local:3111/`.
-- Immich album cards have a `Pick cover` button that opens the picker for that album, and hovering an album card shows the top 5 cover candidates.
+- Immich album cards have a `Pick cover` button that opens the picker for that album, and hovering an album card shows the top 5 cover candidates using Immich thumbnail URLs for fast display.
 - The picker ranks image assets by visible face plus upper-body framing, shows the top 5 candidates, and can set the selected asset as the album cover.
 
 ## Restore After C Drive Format
@@ -97,6 +97,7 @@ Or click `Pick cover` on an album card in Immich. The picker:
 - Shows top 5 candidates.
 - Updates `album.albumThumbnailAssetId` when you click `Set as cover`.
 - Can bulk-set the top candidate for the configured library via `http://localhost:3111/bulk-start`, with progress at `http://localhost:3111/bulk-status`.
+- Hover previews use a fast DB-only ranking path and Immich thumbnails; the full picker page still opens originals to create upper-body crops and CSV reports.
 
 Generated service crops and CSVs are stored in:
 

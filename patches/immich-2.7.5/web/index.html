@@ -498,14 +498,17 @@
           }, 180);
         };
 
-        const positionTooltip = (tooltip, anchor) => {
-          const rect = anchor.getBoundingClientRect();
+        const positionTooltip = (tooltip, anchor, point) => {
           const margin = 12;
           const width = Math.min(520, window.innerWidth - margin * 2);
-          const left = Math.max(margin, Math.min(window.innerWidth - width - margin, rect.left));
-          const topBelow = rect.bottom + 8;
-          const topAbove = rect.top - Math.min(540, window.innerHeight - margin * 2) - 8;
-          const top = topBelow < window.innerHeight - 220 ? topBelow : Math.max(margin, topAbove);
+          const height = Math.min(540, window.innerHeight - margin * 2);
+          const rect = anchor.getBoundingClientRect();
+          const baseX = point?.clientX ?? Math.min(rect.left + rect.width / 2, window.innerWidth - margin);
+          const baseY = point?.clientY ?? Math.min(rect.top + rect.height / 2, window.innerHeight - margin);
+          const left = Math.max(margin, Math.min(window.innerWidth - width - margin, baseX + 14));
+          const below = baseY + 14;
+          const above = baseY - height - 14;
+          const top = below + 220 < window.innerHeight ? below : Math.max(margin, above);
           tooltip.style.width = `${width}px`;
           tooltip.style.left = `${left}px`;
           tooltip.style.top = `${top}px`;
@@ -529,8 +532,9 @@
             const button = document.createElement('button');
             button.type = 'button';
             button.title = `Set #${candidate.rank} as album cover`;
+            const imageUrl = candidate.thumbnailUrl || candidate.cropUrl;
             button.innerHTML = `
-              <img src="${candidate.cropUrl}" alt="Cover candidate ${candidate.rank}">
+              <img src="${imageUrl}" alt="Cover candidate ${candidate.rank}">
               <span>#${candidate.rank} score ${Number(candidate.score || 0).toFixed(3)}</span>
             `;
             button.addEventListener('click', async (event) => {
@@ -547,7 +551,7 @@
           });
         };
 
-        const showTooltip = async (link) => {
+        const showTooltip = async (link, point) => {
           const albumId = albumIdFromLink(link);
           if (!albumId) {
             return;
@@ -557,10 +561,10 @@
           const tooltip = getTooltip();
           tooltip.style.display = 'block';
           tooltip.innerHTML = '<strong>Album cover candidates</strong><div>Loading top 5...</div>';
-          positionTooltip(tooltip, link);
+          positionTooltip(tooltip, link, point);
 
           try {
-            const payload = candidateCache.get(albumId) || await fetch(`${pickerBase}/api/album/${albumId}/candidates`).then((response) => {
+            const payload = candidateCache.get(albumId) || await fetch(`${pickerBase}/api/album/${albumId}/candidates?fast=1`).then((response) => {
               if (!response.ok) {
                 throw new Error(`HTTP ${response.status}`);
               }
@@ -569,7 +573,7 @@
             candidateCache.set(albumId, payload);
             if (activeAlbumId === albumId) {
               renderCandidates(tooltip, albumId, payload);
-              positionTooltip(tooltip, link);
+              positionTooltip(tooltip, link, point);
             }
           } catch (error) {
             if (activeAlbumId === albumId) {
@@ -587,9 +591,14 @@
 
             if (!link.dataset.profileCoverPickerBound) {
               link.dataset.profileCoverPickerBound = 'true';
-              link.addEventListener('mouseenter', () => showTooltip(link));
+              link.addEventListener('mouseenter', (event) => showTooltip(link, event));
+              link.addEventListener('mousemove', (event) => {
+                if (activeAlbumId === albumId) {
+                  positionTooltip(getTooltip(), link, event);
+                }
+              });
               link.addEventListener('mouseleave', scheduleHideTooltip);
-              link.addEventListener('focusin', () => showTooltip(link));
+              link.addEventListener('focusin', (event) => showTooltip(link, event));
               link.addEventListener('focusout', scheduleHideTooltip);
             }
 
