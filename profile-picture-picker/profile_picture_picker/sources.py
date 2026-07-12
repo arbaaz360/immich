@@ -226,8 +226,133 @@ copy (
             albums.extend(self._copy_rows(sql))
         return albums
 
-    def set_album_cover(self, album_id: str, asset_id: str) -> None:
+    def ensure_album_cover_policy(self) -> None:
+        sql = """
+create table if not exists album_cover_policy (
+  "albumId" uuid primary key references album(id) on delete cascade,
+  state text not null check (state in ('pending', 'automatic', 'locked')),
+  "automaticAssetId" uuid references asset(id) on delete set null,
+  attempts integer not null default 0,
+  "nextAttemptAt" timestamptz not null default now(),
+  "lastError" text not null default '',
+  "createdAt" timestamptz not null default now(),
+  "updatedAt" timestamptz not null default now()
+);
+
+insert into album_cover_policy ("albumId", state, "automaticAssetId")
+select id,
+       case when "albumThumbnailAssetId" is null then 'pending' else 'locked' end,
+       null
+from album
+where "deletedAt" is null
+on conflict ("albumId") do nothing;
+
+create or replace function maintain_album_cover_policy() returns trigger language plpgsql as $$
+declare
+  actor text := current_setting('immich.cover_actor', true);
+begin
+  if tg_op = 'INSERT' then
+    insert into album_cover_policy ("albumId", state)
+    values (new.id, 'pending')
+    on conflict ("albumId") do nothing;
+    return new;
+  end if;
+
+  if new."albumThumbnailAssetId" is distinct from old."albumThumbnailAssetId" then
+    insert into album_cover_policy ("albumId", state)
+    values (new.id, 'pending')
+    on conflict ("albumId") do nothing;
+
+    if actor = 'auto' then
+      update album_cover_policy
+      set state = 'automatic',
+          "automaticAssetId" = new."albumThumbnailAssetId",
+          "lastError" = '',
+          "updatedAt" = now()
+      where "albumId" = new.id and state <> 'locked';
+    elsif actor = 'manual' or old."albumThumbnailAssetId" is not null then
+      update album_cover_policy
+      set state = 'locked',
+          "automaticAssetId" = null,
+          "lastError" = '',
+          "updatedAt" = now()
+      where "albumId" = new.id;
+    end if;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists album_cover_policy_insert on album;
+create trigger album_cover_policy_insert
+after insert on album for each row execute function maintain_album_cover_policy();
+drop trigger if exists album_cover_policy_update on album;
+create trigger album_cover_policy_update
+after update of "albumThumbnailAssetId" on album
+for each row execute function maintain_album_cover_policy();
+"""
+        self._psql(sql)
+
+    def list_pending_album_covers(self, grace_seconds: int, limit: int) -> list[dict[str, str]]:
         sql = f"""
+copy (
+  select al.id::text as id, al."albumName" as album_name
+  from album_cover_policy p
+  join album al on al.id = p."albumId"
+  where p.state = 'pending'
+    and p."nextAttemptAt" <= now()
+    and al."deletedAt" is null
+    and al."createdAt" <= now() - make_interval(secs => {int(grace_seconds)})
+    and exists (
+      select 1
+      from album_asset aa
+      join asset a on a.id = aa."assetId"
+      join asset_file af on af."assetId" = a.id and af.type = 'thumbnail' and af."isEdited" = false
+      join asset_face face on face."assetId" = a.id and face."deletedAt" is null and coalesce(face."isVisible", true)
+      where aa."albumId" = al.id
+        and a.type = 'IMAGE' and a.status = 'active' and a."deletedAt" is null
+    )
+  order by al."createdAt", al.id
+  limit {int(limit)}
+) to stdout with csv header;
+"""
+        return self._copy_rows(sql)
+
+    def defer_album_cover(self, album_id: str, error: str, retry_seconds: int = 900) -> None:
+        sql = f"""
+update album_cover_policy
+set attempts = attempts + 1,
+    "nextAttemptAt" = now() + make_interval(secs => {int(retry_seconds)}),
+    "lastError" = left({sql_literal(error)}, 2000),
+    "updatedAt" = now()
+where "albumId" = {sql_literal(album_id)}::uuid and state = 'pending';
+"""
+        self._psql(sql)
+
+    def album_cover_policy_state(self, album_id: str) -> str:
+        sql = f"""
+copy (
+  select state from album_cover_policy where "albumId" = {sql_literal(album_id)}::uuid
+) to stdout with csv header;
+"""
+        rows = self._copy_rows(sql)
+        return rows[0]["state"] if rows else "pending"
+
+    def set_album_cover(self, album_id: str, asset_id: str, *, automatic: bool = False) -> None:
+        actor = "auto" if automatic else "manual"
+        policy_guard = (
+            f"and exists (select 1 from album_cover_policy p where p.\"albumId\" = al.id and p.state <> 'locked')"
+            if automatic
+            else ""
+        )
+        policy_update = (
+            f"update album_cover_policy set state = 'automatic', \"automaticAssetId\" = {sql_literal(asset_id)}::uuid, \"lastError\" = '', \"updatedAt\" = now() where \"albumId\" = {sql_literal(album_id)}::uuid and state <> 'locked' and exists (select 1 from album where id = {sql_literal(album_id)}::uuid and \"albumThumbnailAssetId\" = {sql_literal(asset_id)}::uuid);"
+            if automatic
+            else f"update album_cover_policy set state = 'locked', \"automaticAssetId\" = null, \"lastError\" = '', \"updatedAt\" = now() where \"albumId\" = {sql_literal(album_id)}::uuid and exists (select 1 from album where id = {sql_literal(album_id)}::uuid and \"albumThumbnailAssetId\" = {sql_literal(asset_id)}::uuid);"
+        )
+        sql = f"""
+begin;
+set local immich.cover_actor = '{actor}';
 copy (
 with updated as (
 update album al

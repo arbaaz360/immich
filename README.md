@@ -99,6 +99,9 @@ Or click `Pick cover` on an album card in Immich. The picker:
 - Shows top 5 candidates.
 - Updates `album.albumThumbnailAssetId` when you click `Set as cover`.
 - Can bulk-set the top candidate for the configured library via `http://localhost:3111/bulk-start`, with progress at `http://localhost:3111/bulk-status`.
+- Automatically processes newly created albums after a five-minute grace period once image thumbnails and face data exist. This applies equally to frontend-created albums and albums created by folder scanning.
+- Records automatic cover choices in `album_cover_policy`. Any later cover selection made through Immich or the picker locks that album, and automatic or bulk runs will not overwrite it.
+- Existing albums with covers are baselined as locked when the policy is first installed, preserving all pre-existing cover choices.
 - Hover previews use a fast DB-only ranking path and Immich thumbnails; the full picker page still opens originals to create upper-body crops and CSV reports.
 
 Generated service crops and CSVs are stored in:

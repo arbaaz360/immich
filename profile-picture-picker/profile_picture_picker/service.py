@@ -43,6 +43,10 @@ BULK_STATUS_PATH = RUN_ROOT / "bulk_cover_status.json"
 BULK_JOB_LOCK = threading.Lock()
 BULK_JOB_THREAD: threading.Thread | None = None
 BULK_JOB_STATUS: dict = {}
+AUTO_COVERS_ENABLED = os.environ.get("PROFILE_PICKER_AUTO_COVERS", "1") == "1"
+AUTO_COVER_INTERVAL = int(os.environ.get("PROFILE_PICKER_AUTO_COVER_INTERVAL", "60"))
+AUTO_COVER_GRACE_SECONDS = int(os.environ.get("PROFILE_PICKER_AUTO_COVER_GRACE_SECONDS", "300"))
+AUTO_COVER_BATCH_SIZE = int(os.environ.get("PROFILE_PICKER_AUTO_COVER_BATCH_SIZE", "3"))
 
 
 class ProfilePickerHandler(BaseHTTPRequestHandler):
@@ -414,6 +418,13 @@ def bulk_set_covers(folder: str, limit: int = 0, dry_run: bool = False, progress
         if progress:
             progress({"processed": index - 1, "currentAlbum": album.get("album_name", album_id)})
         try:
+            if source.album_cover_policy_state(album_id) == "locked":
+                skipped += 1
+                item = {"albumName": album["album_name"], "status": "skipped", "message": "manual cover locked"}
+                items.append(item)
+                if progress:
+                    progress({"processed": index, "skipped": skipped, "item": item})
+                continue
             out_dir = RUN_ROOT / album_id
             ranked = run_album_picker(album_id, out_dir, write_outputs=False, use_vlm=False)
             top = sorted(ranked, key=lambda c: c.rank_score, reverse=True)[:1]
@@ -426,7 +437,7 @@ def bulk_set_covers(folder: str, limit: int = 0, dry_run: bool = False, progress
                 continue
             asset_id = top[0].asset_id
             if not dry_run:
-                source.set_album_cover(album_id, asset_id)
+                source.set_album_cover(album_id, asset_id, automatic=True)
             updated += 1
             item = {
                 "albumName": album["album_name"],
@@ -668,10 +679,38 @@ def file_url(path: Path | None) -> str:
     return "/files/" + urllib.parse.quote(str(rel).replace("\\", "/"))
 
 
+def auto_cover_worker() -> None:
+    source = ImmichDbSource()
+    while True:
+        try:
+            pending = source.list_pending_album_covers(AUTO_COVER_GRACE_SECONDS, AUTO_COVER_BATCH_SIZE)
+            for album in pending:
+                album_id = album["id"]
+                try:
+                    ranked = run_album_picker(album_id, RUN_ROOT / album_id, write_outputs=False, use_vlm=False)
+                    top = sorted(ranked, key=lambda candidate: candidate.rank_score, reverse=True)[:1]
+                    if not top:
+                        source.defer_album_cover(album_id, "No image candidates with usable faces")
+                        continue
+                    source.set_album_cover(album_id, top[0].asset_id, automatic=True)
+                    print(f"Automatically set cover for {album.get('album_name', album_id)} to {top[0].asset_id}", flush=True)
+                except Exception as exc:
+                    source.defer_album_cover(album_id, str(exc))
+                    print(f"Automatic cover deferred for {album_id}: {exc}", flush=True)
+        except Exception as exc:
+            print(f"Automatic cover worker error: {exc}", flush=True)
+        time.sleep(max(10, AUTO_COVER_INTERVAL))
+
+
 def main() -> int:
     host = os.environ.get("PROFILE_PICKER_HOST", "0.0.0.0")
     port = int(os.environ.get("PROFILE_PICKER_PORT", "3111"))
     RUN_ROOT.mkdir(parents=True, exist_ok=True)
+    source = ImmichDbSource()
+    source.ensure_album_cover_policy()
+    if AUTO_COVERS_ENABLED:
+        threading.Thread(target=auto_cover_worker, name="auto-album-cover", daemon=True).start()
+        print("Automatic album-cover policy worker enabled", flush=True)
     server = ThreadingHTTPServer((host, port), ProfilePickerHandler)
     print(f"Immich profile picker listening on http://{host}:{port}")
     server.serve_forever()
