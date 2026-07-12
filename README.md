@@ -2,6 +2,8 @@
 
 This repo stores the reproducible parts of the local Immich setup.
 
+Before changing this deployment, read [`CUSTOMIZATION_CONTRACT.md`](CUSTOMIZATION_CONTRACT.md). It defines the storage, preview-free media, invalid-media, album-cover, and UI invariants that must remain true across fixes.
+
 It intentionally does not store databases, Redis data, thumbnails, model cache, original media, backups, API keys, or logs.
 
 ## Current Layout
