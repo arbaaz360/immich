@@ -35,6 +35,7 @@ services:
       - C:/Immich/patches/immich-2.7.5/media.service.js:/usr/src/app/server/dist/services/media.service.js:ro
       - C:/Immich/patches/immich-2.7.5/smart-info.service.js:/usr/src/app/server/dist/services/smart-info.service.js:ro
       - C:/Immich/patches/immich-2.7.5/person.service.js:/usr/src/app/server/dist/services/person.service.js:ro
+      - C:/Immich/patches/immich-2.7.5/person.repository.js:/usr/src/app/server/dist/repositories/person.repository.js:ro
       - C:/Immich/patches/immich-2.7.5/ocr.service.js:/usr/src/app/server/dist/services/ocr.service.js:ro
       - C:/Immich/patches/immich-2.7.5/asset-job.repository.js:/usr/src/app/server/dist/repositories/asset-job.repository.js:ro
     ports:
@@ -72,6 +73,7 @@ services:
       - C:/Immich/patches/immich-2.7.5/media.service.js:/usr/src/app/server/dist/services/media.service.js:ro
       - C:/Immich/patches/immich-2.7.5/smart-info.service.js:/usr/src/app/server/dist/services/smart-info.service.js:ro
       - C:/Immich/patches/immich-2.7.5/person.service.js:/usr/src/app/server/dist/services/person.service.js:ro
+      - C:/Immich/patches/immich-2.7.5/person.repository.js:/usr/src/app/server/dist/repositories/person.repository.js:ro
       - C:/Immich/patches/immich-2.7.5/ocr.service.js:/usr/src/app/server/dist/services/ocr.service.js:ro
       - C:/Immich/patches/immich-2.7.5/asset-job.repository.js:/usr/src/app/server/dist/repositories/asset-job.repository.js:ro
 

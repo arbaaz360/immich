@@ -11,6 +11,7 @@ var __metadata = (this && this.__metadata) || function (k, v) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.MediaService = void 0;
 const common_1 = require("@nestjs/common");
+const node_fs_1 = require("node:fs");
 const constants_1 = require("../constants");
 const storage_core_1 = require("../cores/storage.core");
 const decorators_1 = require("../decorators");
@@ -295,7 +296,8 @@ let MediaService = class MediaService extends base_service_1.BaseService {
                 this.logger.error(`Could not generate person thumbnail for video ${id}: missing preview path`);
                 return enum_1.JobStatus.Failed;
             }
-            inputImage = previewPath;
+            const cachedThumbnailPath = previewPath.replace('/data/thumbs/', '/thumbnail-cache/');
+            inputImage = (0, node_fs_1.existsSync)(cachedThumbnailPath) ? cachedThumbnailPath : previewPath;
         }
         else if (image.extractEmbedded && mime_types_1.mimeTypes.isRaw(originalPath)) {
             const extracted = await this.extractImage(originalPath, image.preview.size);

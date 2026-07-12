@@ -23,6 +23,8 @@ This setup is intentionally pinned. Immich server and ML images use `v2.7.5`, an
 - Thumbnail requests prefer the SSD thumbnail cache at `/thumbnail-cache`.
 - Smart Search, Face Detection, and OCR ML jobs use original image files instead of preview files.
 - Thumbnail generation does not create preview files.
+- Missing-only thumbnail jobs ignore preview records and queue only assets missing a thumbnail, thumbhash, or required converted full-size file.
+- Person thumbnails use originals for images and the small asset thumbnail for videos; they do not depend on preview files.
 - Video thumbnail generation does not create preview files.
 - Video transcoding is disabled by local patch; `Transcode Videos` will not queue video encode jobs, and already queued encode jobs skip.
 - Reverse face search runs as a Docker Compose service on `http://localhost:2299/`.
@@ -104,6 +106,16 @@ Generated service crops and CSVs are stored in:
 ```text
 C:\Immich\profile-picture-picker-runs
 ```
+
+## Thumbnail Consistency Audit
+
+Audit database thumbnail paths against the SSD thumbnail tree and cache without changing anything:
+
+```powershell
+python .\scripts\audit_missing_thumbnails.py --output .\missing-thumbnails.csv
+```
+
+Add `--apply` to remove only stale thumbnail rows, clear the corresponding thumbhashes, and reset missing person-thumbnail paths so a non-force thumbnail job can regenerate them. The script ignores preview rows and never modifies original media.
 
 If LM Studio is running on the host, set these in `X:\Immich\.env`:
 

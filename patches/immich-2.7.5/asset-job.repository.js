@@ -67,7 +67,6 @@ let AssetJobRepository = class AssetJobRepository {
             const file = (type) => selectFrom('asset_file').whereRef('assetId', '=', 'asset.id').where('type', '=', kysely_1.sql.lit(type));
             const conditions = [
                 not(exists(file(enum_1.AssetFileType.Thumbnail))),
-                not(exists(file(enum_1.AssetFileType.Preview))),
                 and([
                     eb('asset.isEdited', '=', kysely_1.sql.lit(true)),
                     not(exists(file(enum_1.AssetFileType.FullSize).where('asset_file.isEdited', '=', kysely_1.sql.lit(true)))),
