@@ -335,10 +335,14 @@ let PersonRepository = class PersonRepository {
     getRandomFace(personId) {
         return this.db
             .selectFrom('asset_face')
+            .innerJoin('asset', 'asset.id', 'asset_face.assetId')
             .selectAll('asset_face')
             .where('asset_face.personId', '=', personId)
             .where('asset_face.deletedAt', 'is', null)
             .where('asset_face.isVisible', 'is', true)
+            .where('asset.isOffline', '=', false)
+            .where('asset.deletedAt', 'is', null)
+            .where(({ exists, not, selectFrom }) => not(exists(selectFrom('invalid_media_path').select('originalPath').whereRef('originalPath', '=', 'asset.originalPath'))))
             .executeTakeFirst();
     }
     async getLatestFaceDate() {

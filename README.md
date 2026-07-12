@@ -120,6 +120,8 @@ python .\scripts\audit_missing_thumbnails.py --output .\missing-thumbnails.csv
 
 Add `--apply` to remove only stale thumbnail rows, clear the corresponding thumbhashes, and reset missing person-thumbnail paths so a non-force thumbnail job can regenerate them. The script ignores preview rows and never modifies original media.
 
+For originals that are proven missing, zero-byte, truncated, or undecodable, use `audit_unprocessable_media.py` followed by `apply_unprocessable_media_repairs.py`. The repair records excluded original paths in `invalid_media_path`, marks surviving asset rows offline, and prevents thumbnail/face jobs from retrying them. `quarantine_invalid_media.py` can reversibly move damaged files outside scanned roots and writes a restoration manifest; it does not delete them.
+
 If LM Studio is running on the host, set these in `X:\Immich\.env`:
 
 ```text

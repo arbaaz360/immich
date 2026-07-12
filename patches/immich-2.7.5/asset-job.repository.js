@@ -60,6 +60,8 @@ let AssetJobRepository = class AssetJobRepository {
             .selectFrom('asset')
             .select(['asset.id', 'asset.isEdited'])
             .where('asset.deletedAt', 'is', null)
+            .where('asset.isOffline', '=', false)
+            .where(({ exists, not, selectFrom }) => not(exists(selectFrom('invalid_media_path').select('originalPath').whereRef('originalPath', '=', 'asset.originalPath'))))
             .where('asset.visibility', '!=', kysely_1.sql.lit(enum_1.AssetVisibility.Hidden))
             .$if(!options.force, (qb) => qb
             .innerJoin('asset_job_status', 'asset_job_status.assetId', 'asset.id')
@@ -143,6 +145,8 @@ let AssetJobRepository = class AssetJobRepository {
         return this.db
             .selectFrom('asset')
             .where('asset.type', '=', kysely_1.sql.lit(enum_1.AssetType.Image))
+            .where('asset.isOffline', '=', false)
+            .where(({ exists, not, selectFrom }) => not(exists(selectFrom('invalid_media_path').select('originalPath').whereRef('originalPath', '=', 'asset.originalPath'))))
             .where('asset.visibility', '!=', enum_1.AssetVisibility.Hidden)
             .where('asset.deletedAt', 'is', null)
             .innerJoin('asset_job_status as job_status', 'assetId', 'asset.id');
