@@ -109,6 +109,93 @@
       }
     </script>
 
+    <script>
+      (() => {
+        const enabledKey = 'immichAlbumCountFilterEnabled';
+        const modeKey = 'immichAlbumCountFilterMode';
+        const minimumKey = 'immichAlbumCountFilterMinimum';
+        const pickerBase = `${location.protocol}//${location.hostname}:3111`;
+        const originalFetch = window.fetch.bind(window);
+        let countsPromise;
+
+        window.__immichAlbumCountFilter = {
+          get enabled() {
+            return localStorage.getItem(enabledKey) !== 'false';
+          },
+          get mode() {
+            const value = localStorage.getItem(modeKey) || 'images';
+            return ['all', 'images', 'videos'].includes(value) ? value : 'images';
+          },
+          get minimum() {
+            return Math.max(0, Number.parseInt(localStorage.getItem(minimumKey) || '30', 10) || 0);
+          },
+          save({ enabled, mode, minimum }) {
+            localStorage.setItem(enabledKey, String(Boolean(enabled)));
+            localStorage.setItem(modeKey, ['all', 'images', 'videos'].includes(mode) ? mode : 'images');
+            localStorage.setItem(minimumKey, String(Math.max(0, Number.parseInt(minimum, 10) || 0)));
+            location.reload();
+          },
+        };
+
+        const getCounts = () => {
+          countsPromise ||= originalFetch(`${pickerBase}/api/album-media-counts`)
+            .then((response) => {
+              if (!response.ok) {
+                throw new Error(`Album media counts failed: HTTP ${response.status}`);
+              }
+              return response.json();
+            })
+            .then((payload) => payload.albums || {});
+          return countsPromise;
+        };
+
+        window.fetch = async (input, init) => {
+          const response = await originalFetch(input, init);
+          try {
+            const method = String(init?.method || (input instanceof Request ? input.method : 'GET')).toUpperCase();
+            const url = new URL(input instanceof Request ? input.url : input, location.href);
+            const settings = window.__immichAlbumCountFilter;
+            if (
+              method !== 'GET' ||
+              location.pathname !== '/albums' ||
+              url.origin !== location.origin ||
+              url.pathname !== '/api/albums' ||
+              !settings.enabled ||
+              !response.ok
+            ) {
+              return response;
+            }
+
+            const albums = await response.clone().json();
+            if (!Array.isArray(albums)) {
+              return response;
+            }
+
+            const counts = await getCounts();
+            const filtered = albums.filter((album) => {
+              const count = counts[album.id] || { images: 0, videos: 0 };
+              const value = settings.mode === 'images'
+                ? count.images
+                : settings.mode === 'videos'
+                  ? count.videos
+                  : count.images + count.videos;
+              return value >= settings.minimum;
+            });
+            const headers = new Headers(response.headers);
+            headers.delete('content-length');
+            return new Response(JSON.stringify(filtered), {
+              status: response.status,
+              statusText: response.statusText,
+              headers,
+            });
+          } catch (error) {
+            console.error('Album count filter failed open:', error);
+            return response;
+          }
+        };
+      })();
+    </script>
+
     <link rel="stylesheet" href="/custom.css" />
   </head>
 
@@ -225,6 +312,18 @@
           pager = document.createElement('div');
           pager.id = pagerId;
           pager.innerHTML = `
+            <label class="album-count-filter-toggle" title="Hide albums below the selected media count">
+              <input type="checkbox" data-album-count-enabled />
+              <span>Min album size</span>
+            </label>
+            <select data-album-count-mode aria-label="Album media type">
+              <option value="all">Images + video</option>
+              <option value="images">Images</option>
+              <option value="videos">Video</option>
+            </select>
+            <input type="number" data-album-count-minimum aria-label="Minimum album media count" min="0" step="1" value="30" />
+            <button type="button" data-album-count-apply>Apply</button>
+            <span class="album-pager-divider" aria-hidden="true"></span>
             <button type="button" data-album-page="first">First</button>
             <button type="button" data-album-page="prev">&lt;</button>
             <span data-album-page-status>Albums</span>
@@ -238,6 +337,10 @@
             </select>
           `;
           document.body.append(pager);
+          const settings = window.__immichAlbumCountFilter;
+          pager.querySelector('[data-album-count-enabled]').checked = settings.enabled;
+          pager.querySelector('[data-album-count-mode]').value = settings.mode;
+          pager.querySelector('[data-album-count-minimum]').value = String(settings.minimum);
           return pager;
         };
 
@@ -250,7 +353,7 @@
           const { page, pageSize, total, pageCount } = detail;
           const start = total === 0 ? 0 : (page - 1) * pageSize + 1;
           const end = Math.min(total, page * pageSize);
-          pager.hidden = total <= pageSize;
+          pager.hidden = false;
           pager.querySelector('[data-album-page-status]').textContent = `Albums ${start}-${end} of ${total} - page ${page}/${pageCount}`;
           pager.querySelector('[data-album-page="first"]').disabled = page <= 1;
           pager.querySelector('[data-album-page="prev"]').disabled = page <= 1;
@@ -284,6 +387,8 @@
               box-shadow: 0 8px 22px rgba(15, 23, 42, .18);
               font: 600 13px/1 system-ui, -apple-system, Segoe UI, sans-serif;
               transform: translateX(-50%);
+              flex-wrap: wrap;
+              justify-content: center;
             }
 
             .dark #immich-album-pager {
@@ -293,7 +398,8 @@
             }
 
             #immich-album-pager button,
-            #immich-album-pager select {
+            #immich-album-pager select,
+            #immich-album-pager input[type="number"] {
               height: 30px;
               border: 1px solid rgba(148, 163, 184, .5);
               border-radius: 999px;
@@ -314,6 +420,25 @@
             #immich-album-pager span {
               white-space: nowrap;
             }
+
+            #immich-album-pager .album-count-filter-toggle {
+              display: inline-flex;
+              align-items: center;
+              gap: 6px;
+              white-space: nowrap;
+              cursor: pointer;
+            }
+
+            #immich-album-pager input[type="number"] {
+              box-sizing: border-box;
+              width: 68px;
+            }
+
+            #immich-album-pager .album-pager-divider {
+              width: 1px;
+              height: 24px;
+              background: rgba(148, 163, 184, .55);
+            }
           `;
           document.head.append(style);
         };
@@ -327,6 +452,17 @@
         installPagerStyles();
 
         document.addEventListener('click', (event) => {
+          const applyFilter = event.target.closest?.('[data-album-count-apply]');
+          if (applyFilter) {
+            const pager = applyFilter.closest('#immich-album-pager');
+            window.__immichAlbumCountFilter.save({
+              enabled: pager.querySelector('[data-album-count-enabled]').checked,
+              mode: pager.querySelector('[data-album-count-mode]').value,
+              minimum: pager.querySelector('[data-album-count-minimum]').value,
+            });
+            return;
+          }
+
           const button = event.target.closest?.('[data-album-page]');
           if (!button || !window.__immichAlbumPager) {
             return;
@@ -382,10 +518,13 @@
       (() => {
         const pickerBase = `${location.protocol}//${location.hostname}:3111`;
         const albumPattern = /^\/albums\/([0-9a-fA-F-]{36})$/;
+        const photoAssetPattern = /\/photos\/([0-9a-fA-F-]{36})$/;
         const tooltipId = 'immich-profile-cover-tooltip';
+        const copyButtonId = 'immich-copy-original-image-button';
         const candidateCache = new Map();
         let activeAlbumId = '';
         let hideTimer = 0;
+        let injectedUiTimer = 0;
 
         const albumIdFromLink = (link) => {
           try {
@@ -409,16 +548,16 @@
               position: fixed;
               z-index: 2147483647;
               display: none;
-              width: min(520px, calc(100vw - 24px));
-              max-height: min(540px, calc(100vh - 24px));
+               width: auto;
+              max-height: min(680px, calc(100vh - 24px));
               overflow: auto;
-              padding: 10px;
+              padding: 12px;
               border: 1px solid rgba(148, 163, 184, .45);
               border-radius: 8px;
               background: rgba(255, 255, 255, .98);
               color: #111827;
               box-shadow: 0 16px 42px rgba(15, 23, 42, .28);
-              font: 500 12px/1.35 system-ui, -apple-system, Segoe UI, sans-serif;
+              font: 500 13px/1.35 system-ui, -apple-system, Segoe UI, sans-serif;
             }
 
             .dark #immich-profile-cover-tooltip {
@@ -429,14 +568,14 @@
 
             #immich-profile-cover-tooltip strong {
               display: block;
-              margin: 0 0 8px;
-              font-size: 13px;
+              margin: 0 0 10px;
+              font-size: 14px;
             }
 
             #immich-profile-cover-tooltip .profile-cover-grid {
               display: grid;
-              grid-template-columns: repeat(5, minmax(0, 1fr));
-              gap: 8px;
+               grid-template-columns: repeat(var(--candidate-count, 1), minmax(130px, 1fr));
+              gap: 12px;
             }
 
             #immich-profile-cover-tooltip button {
@@ -462,15 +601,46 @@
 
             #immich-profile-cover-tooltip span {
               display: block;
-              padding: 5px 6px;
+              padding: 6px 7px;
               white-space: nowrap;
               overflow: hidden;
               text-overflow: ellipsis;
             }
 
             #immich-profile-cover-tooltip .profile-cover-status {
-              margin-top: 8px;
+              margin-top: 10px;
               color: #2563eb;
+            }
+
+            #immich-copy-original-image-button {
+              position: fixed;
+              right: 78px;
+              bottom: 18px;
+              z-index: 2147483647;
+              display: none;
+              align-items: center;
+              justify-content: center;
+              min-width: 108px;
+              height: 36px;
+              padding: 0 13px;
+              border: 1px solid rgba(15, 23, 42, .18);
+              border-radius: 999px;
+              background: #ffffff;
+              color: #172033;
+              font: 700 13px/1 system-ui, -apple-system, Segoe UI, sans-serif;
+              box-shadow: 0 8px 22px rgba(15, 23, 42, .22);
+              cursor: pointer;
+            }
+
+            #immich-copy-original-image-button:disabled {
+              cursor: wait;
+              opacity: .72;
+            }
+
+            .dark #immich-copy-original-image-button {
+              border-color: rgba(71, 85, 105, .8);
+              background: #111827;
+              color: #f8fafc;
             }
           `;
           document.head.append(style);
@@ -495,27 +665,32 @@
             const tooltip = getTooltip();
             tooltip.style.display = 'none';
             activeAlbumId = '';
-          }, 180);
+           }, 1500);
         };
 
-        const positionTooltip = (tooltip, anchor, point) => {
-          const margin = 12;
-          const width = Math.min(520, window.innerWidth - margin * 2);
-          const height = Math.min(540, window.innerHeight - margin * 2);
+        const positionTooltip = (tooltip, anchor) => {
+           const margin = 4;
+           const candidateCount = Number(tooltip.dataset.candidateCount || 0);
+           const idealWidth = candidateCount > 0 ? candidateCount * 142 + Math.max(0, candidateCount - 1) * 12 + 24 : 320;
+           const width = Math.min(760, Math.max(180, idealWidth), window.innerWidth - margin * 2);
+          const height = Math.min(680, window.innerHeight - margin * 2);
           const rect = anchor.getBoundingClientRect();
-          const baseX = point?.clientX ?? Math.min(rect.left + rect.width / 2, window.innerWidth - margin);
-          const baseY = point?.clientY ?? Math.min(rect.top + rect.height / 2, window.innerHeight - margin);
-          const left = Math.max(margin, Math.min(window.innerWidth - width - margin, baseX + 14));
-          const below = baseY + 14;
-          const above = baseY - height - 14;
-          const top = below + 220 < window.innerHeight ? below : Math.max(margin, above);
-          tooltip.style.width = `${width}px`;
+          const rightSide = rect.right + margin;
+          const leftSide = rect.left - width - margin;
+          const left = rightSide + width + margin <= window.innerWidth
+            ? rightSide
+            : Math.max(margin, Math.min(window.innerWidth - width - margin, leftSide));
+          const top = Math.max(margin, Math.min(window.innerHeight - height - margin, rect.top));
+           tooltip.style.width = `${width}px`;
           tooltip.style.left = `${left}px`;
           tooltip.style.top = `${top}px`;
         };
 
-        const renderCandidates = (tooltip, albumId, payload) => {
-          const candidates = payload.candidates || [];
+         const renderCandidates = (tooltip, albumId, payload) => {
+           const candidates = payload.candidates || [];
+           const visibleCount = Math.min(5, candidates.length);
+           tooltip.dataset.candidateCount = String(visibleCount);
+           tooltip.style.setProperty('--candidate-count', String(Math.max(1, visibleCount)));
           if (!candidates.length) {
             tooltip.innerHTML = `<strong>${payload.albumName || 'Album cover candidates'}</strong><div>No face candidates found.</div>`;
             return;
@@ -551,17 +726,18 @@
           });
         };
 
-        const showTooltip = async (link, point) => {
+        const showTooltip = async (link) => {
           const albumId = albumIdFromLink(link);
           if (!albumId) {
             return;
           }
           clearTimeout(hideTimer);
           activeAlbumId = albumId;
-          const tooltip = getTooltip();
+           const tooltip = getTooltip();
+           tooltip.dataset.candidateCount = '0';
           tooltip.style.display = 'block';
           tooltip.innerHTML = '<strong>Album cover candidates</strong><div>Loading top 5...</div>';
-          positionTooltip(tooltip, link, point);
+          positionTooltip(tooltip, link);
 
           try {
             const payload = candidateCache.get(albumId) || await fetch(`${pickerBase}/api/album/${albumId}/candidates?fast=1`).then((response) => {
@@ -573,12 +749,220 @@
             candidateCache.set(albumId, payload);
             if (activeAlbumId === albumId) {
               renderCandidates(tooltip, albumId, payload);
-              positionTooltip(tooltip, link, point);
+              positionTooltip(tooltip, link);
             }
           } catch (error) {
             if (activeAlbumId === albumId) {
               tooltip.innerHTML = `<strong>Album cover candidates</strong><div>Could not load candidates: ${String(error.message || error)}</div>`;
             }
+          }
+        };
+
+        const currentPhotoAssetId = () => location.pathname.match(photoAssetPattern)?.[1] || '';
+
+        const originalImageUrl = (assetId) => `/api/assets/${assetId}/original`;
+
+        const extensionCopyEventName = 'album-sentinel-copy-original-image';
+
+        const supportsImageClipboardWrite = () => Boolean(navigator.clipboard?.write && window.ClipboardItem);
+
+        const supportsExtensionImageCopy = () => (
+          document.documentElement.dataset.albumSentinelCopyAvailable === 'true'
+        );
+
+        const copyButtonText = () => (
+          supportsExtensionImageCopy() || supportsImageClipboardWrite() ? 'Copy image' : 'Open image'
+        );
+
+        const copyButtonTitle = () => (
+          supportsExtensionImageCopy()
+            ? 'Copy this image using Album Sentinel'
+            : supportsImageClipboardWrite()
+              ? 'Copy the original image to clipboard'
+              : 'Open the original image so the browser context menu can copy it'
+        );
+
+        const displayedImageUrlForAsset = (assetId) => {
+          const images = Array.from(document.images || [])
+            .filter((image) => (image.currentSrc || image.src || '').includes(assetId))
+            .map((image) => {
+              const rect = image.getBoundingClientRect();
+              return {
+                image,
+                area: Math.max(0, rect.width) * Math.max(0, rect.height),
+              };
+            })
+            .sort((a, b) => b.area - a.area);
+          return images[0] ? (images[0].image.currentSrc || images[0].image.src || '') : '';
+        };
+
+        const imageBlobToPng = async (blob) => {
+          if (blob.type === 'image/png') {
+            return blob;
+          }
+
+          const bitmap = await createImageBitmap(blob);
+          try {
+            const canvas = document.createElement('canvas');
+            canvas.width = bitmap.width;
+            canvas.height = bitmap.height;
+            const context = canvas.getContext('2d');
+            if (!context) {
+              throw new Error('Could not create canvas context');
+            }
+            context.drawImage(bitmap, 0, 0);
+            return await new Promise((resolve, reject) => {
+              canvas.toBlob((pngBlob) => {
+                if (pngBlob) {
+                  resolve(pngBlob);
+                } else {
+                  reject(new Error('Could not convert image for clipboard'));
+                }
+              }, 'image/png');
+            });
+          } finally {
+            bitmap.close?.();
+          }
+        };
+
+        const fetchImageBlob = async (url) => {
+          const response = await fetch(url, {
+            credentials: 'include',
+            cache: 'no-store',
+          });
+          if (!response.ok) {
+            throw new Error(`Could not load image: HTTP ${response.status}`);
+          }
+
+          const blob = await response.blob();
+          if (!blob.type.startsWith('image/')) {
+            throw new Error(`This asset is not a browser-copyable image (${blob.type || 'unknown type'})`);
+          }
+
+          return blob;
+        };
+
+        const clipboardPngBlobForAsset = async (assetId) => {
+          try {
+            return await imageBlobToPng(await fetchImageBlob(originalImageUrl(assetId)));
+          } catch (originalError) {
+            const displayedUrl = displayedImageUrlForAsset(assetId);
+            if (!displayedUrl) {
+              throw originalError;
+            }
+
+            return await imageBlobToPng(await fetchImageBlob(displayedUrl));
+          }
+        };
+
+        const copyOriginalImageToClipboard = (assetId) => {
+          if (!supportsImageClipboardWrite()) {
+            throw new Error('Image clipboard is not supported by this browser');
+          }
+
+          return navigator.clipboard.write([
+            new ClipboardItem({ 'image/png': clipboardPngBlobForAsset(assetId) }),
+          ]);
+        };
+
+        const requestExtensionImageCopy = (assetId) => {
+          if (!supportsExtensionImageCopy()) {
+            return false;
+          }
+
+          document.dispatchEvent(new CustomEvent(extensionCopyEventName, {
+            bubbles: true,
+            cancelable: true,
+            detail: { assetId },
+          }));
+          return true;
+        };
+
+        const openOriginalImageForNativeCopy = (assetId) => {
+          window.open(originalImageUrl(assetId), '_blank', 'noopener,noreferrer');
+        };
+
+        const getCopyButton = () => {
+          let button = document.getElementById(copyButtonId);
+          if (button) {
+            return button;
+          }
+
+          button = document.createElement('button');
+          button.id = copyButtonId;
+          button.type = 'button';
+          button.textContent = copyButtonText();
+          button.title = copyButtonTitle();
+          button.addEventListener('click', async (event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            const assetId = button.dataset.assetId || currentPhotoAssetId();
+            if (!assetId) {
+              return;
+            }
+
+            if (requestExtensionImageCopy(assetId)) {
+              return;
+            }
+
+            button.disabled = true;
+            if (!supportsImageClipboardWrite()) {
+              openOriginalImageForNativeCopy(assetId);
+              button.textContent = 'Opened image';
+              setTimeout(() => {
+                if ((button.dataset.assetId || '') === assetId) {
+                  button.textContent = copyButtonText();
+                  button.title = copyButtonTitle();
+                }
+              }, 1600);
+              button.disabled = false;
+              return;
+            }
+
+            button.textContent = 'Copying...';
+            try {
+              await copyOriginalImageToClipboard(assetId);
+              button.textContent = 'Copied';
+              setTimeout(() => {
+                if ((button.dataset.assetId || '') === assetId) {
+                  button.textContent = copyButtonText();
+                  button.title = copyButtonTitle();
+                }
+              }, 1600);
+            } catch (error) {
+              console.error(error);
+              button.textContent = 'Copy failed';
+              setTimeout(() => {
+                if ((button.dataset.assetId || '') === assetId) {
+                  button.textContent = copyButtonText();
+                  button.title = copyButtonTitle();
+                }
+              }, 2600);
+            } finally {
+              button.disabled = false;
+            }
+          });
+          document.body.append(button);
+          return button;
+        };
+
+        const updateCopyImageButton = () => {
+          const button = getCopyButton();
+          const assetId = currentPhotoAssetId();
+          const display = assetId ? 'inline-flex' : 'none';
+          if ((button.dataset.assetId || '') !== assetId) {
+            button.dataset.assetId = assetId;
+          }
+          if (button.style.display !== display) {
+            button.style.display = display;
+          }
+          const text = copyButtonText();
+          const title = copyButtonTitle();
+          if (button.title !== title) {
+            button.title = title;
+          }
+          if (!button.disabled && button.textContent !== text) {
+            button.textContent = text;
           }
         };
 
@@ -591,14 +975,9 @@
 
             if (!link.dataset.profileCoverPickerBound) {
               link.dataset.profileCoverPickerBound = 'true';
-              link.addEventListener('mouseenter', (event) => showTooltip(link, event));
-              link.addEventListener('mousemove', (event) => {
-                if (activeAlbumId === albumId) {
-                  positionTooltip(getTooltip(), link, event);
-                }
-              });
+              link.addEventListener('mouseenter', () => showTooltip(link));
               link.addEventListener('mouseleave', scheduleHideTooltip);
-              link.addEventListener('focusin', (event) => showTooltip(link, event));
+              link.addEventListener('focusin', () => showTooltip(link));
               link.addEventListener('focusout', scheduleHideTooltip);
             }
 
@@ -637,21 +1016,37 @@
           });
         };
 
+        const updateInjectedUi = () => {
+          addPickCoverButtons();
+          updateCopyImageButton();
+        };
+
+        const scheduleInjectedUiUpdate = () => {
+          if (injectedUiTimer) {
+            return;
+          }
+
+          injectedUiTimer = window.setTimeout(() => {
+            injectedUiTimer = 0;
+            updateInjectedUi();
+          }, 150);
+        };
+
         installPickerStyles();
-        const observer = new MutationObserver(addPickCoverButtons);
+        const observer = new MutationObserver(scheduleInjectedUiUpdate);
         observer.observe(document.documentElement, { childList: true, subtree: true });
-        addPickCoverButtons();
-        window.addEventListener('popstate', () => setTimeout(addPickCoverButtons, 50));
+        updateInjectedUi();
+        window.addEventListener('popstate', () => setTimeout(updateInjectedUi, 50));
         const originalPushState = history.pushState;
         history.pushState = function (...args) {
           const result = originalPushState.apply(this, args);
-          setTimeout(addPickCoverButtons, 50);
+          setTimeout(updateInjectedUi, 50);
           return result;
         };
         const originalReplaceState = history.replaceState;
         history.replaceState = function (...args) {
           const result = originalReplaceState.apply(this, args);
-          setTimeout(addPickCoverButtons, 50);
+          setTimeout(updateInjectedUi, 50);
           return result;
         };
       })();

@@ -61,6 +61,19 @@ class ProfilePickerHandler(BaseHTTPRequestHandler):
                 self.send_html(index_page())
             elif path == "/health":
                 self.send_text("ok\n")
+            elif path == "/api/album-media-counts":
+                rows = ImmichDbSource().get_album_media_counts()
+                self.send_json(
+                    {
+                        "albums": {
+                            row["album_id"]: {
+                                "images": int(row["image_count"]),
+                                "videos": int(row["video_count"]),
+                            }
+                            for row in rows
+                        }
+                    }
+                )
             elif path.startswith("/api/album/") and path.endswith("/candidates"):
                 album_id = path.split("/")[3]
                 refresh = query.get("refresh") == ["1"]

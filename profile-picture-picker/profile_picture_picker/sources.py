@@ -138,33 +138,47 @@ copy (
         rows = self._copy_rows(sql)
         return rows[0] if rows else None
 
+    def get_album_media_counts(self) -> list[dict[str, str]]:
+        """Return active image/video membership counts for every non-deleted album."""
+        sql = """
+copy (
+  select
+    al.id::text as album_id,
+    count(*) filter (where a.type = 'IMAGE')::text as image_count,
+    count(*) filter (where a.type = 'VIDEO')::text as video_count
+  from album al
+  left join album_asset aa on aa."albumId" = al.id
+  left join asset a
+    on a.id = aa."assetId"
+   and a."deletedAt" is null
+   and a.status = 'active'
+  where al."deletedAt" is null
+  group by al.id
+  order by al.id
+) to stdout with csv header
+"""
+        return self._copy_rows(sql)
+
     def list_albums_for_prefix(self, folder: str | Path) -> list[dict[str, str]]:
         prefix = host_to_container_prefix(folder).rstrip("/") + "/"
         folder_rows = self._direct_child_folder_rows(prefix.rstrip("/"))
-        if folder_rows:
+        if 0 < len(folder_rows) <= 500:
             return self._list_albums_for_folder_rows(folder_rows)
 
         sql = f"""
 copy (
-  select
+  select distinct
     al.id::text as id,
     al."albumName" as album_name,
-    coalesce(al."albumThumbnailAssetId"::text, '') as thumbnail_asset_id,
-    count(distinct a.id) filter (where a.type = 'IMAGE') as image_count,
-    count(distinct af.id) as face_count
+    coalesce(al."albumThumbnailAssetId"::text, '') as thumbnail_asset_id
   from album al
   join album_asset aa on aa."albumId" = al.id
   join asset a on a.id = aa."assetId"
-  left join asset_face af
-    on af."assetId" = a.id
-   and af."deletedAt" is null
-   and coalesce(af."isVisible", true) is true
   where al."deletedAt" is null
     and a."deletedAt" is null
     and a.status = 'active'
+    and a.type = 'IMAGE'
     and a."originalPath" like {sql_literal(prefix + '%')}
-  group by al.id, al."albumName", al."albumThumbnailAssetId"
-  having count(distinct a.id) filter (where a.type = 'IMAGE') > 0
   order by al."albumName"
 ) to stdout with csv header
 """
@@ -367,10 +381,13 @@ where al.id = aa."albumId"
   and a.type = 'IMAGE'
   and a.status = 'active'
   and a."deletedAt" is null
+  {policy_guard}
   returning al.id, al."albumThumbnailAssetId"::text as thumbnail_asset_id
 )
 select id, thumbnail_asset_id from updated
 ) to stdout with csv header;
+{policy_update}
+commit;
 """
         rows = self._copy_rows(sql)
         if not rows or rows[0].get("thumbnail_asset_id") != asset_id:

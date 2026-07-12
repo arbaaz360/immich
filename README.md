@@ -2,7 +2,7 @@
 
 This repo stores the reproducible parts of the local Immich setup.
 
-Before changing this deployment, read [`CUSTOMIZATION_CONTRACT.md`](CUSTOMIZATION_CONTRACT.md). It defines the storage, preview-free media, invalid-media, album-cover, and UI invariants that must remain true across fixes.
+Before changing this deployment, read [`CUSTOMIZATION_CONTRACT.md`](CUSTOMIZATION_CONTRACT.md). It defines the storage, preview-free media, invalid-media, album-cover, and UI invariants that must remain true across fixes. [`OPERATIONS.md`](OPERATIONS.md) maps those rules to the background services, schedules, ports, search tools, picker flows, pagination patch, and safe restart procedures.
 
 It intentionally does not store databases, Redis data, thumbnails, model cache, original media, backups, API keys, or logs.
 
@@ -34,6 +34,7 @@ This setup is intentionally pinned. Immich server and ML images use `v2.7.5`, an
 - Reverse face search can upload a query image, extract an Immich face embedding, and search the local `face_search` table.
 - Profile picture picker runs as a Docker Compose service on `http://localhost:3111/` and `http://samurai.local:3111/`.
 - Immich album cards have a `Pick cover` button that opens the picker for that album, and hovering an album card shows the top 5 cover candidates using Immich thumbnail URLs for fast display.
+- The album list has a persistent minimum-size filter, enabled by default for albums with at least 30 images; it can switch among images plus video, images only, or video only and works with the custom pager.
 - The picker ranks image assets by visible face plus upper-body framing, shows the top 5 candidates, and can set the selected asset as the album cover.
 
 ## Restore After C Drive Format

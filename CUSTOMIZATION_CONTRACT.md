@@ -2,6 +2,8 @@
 
 This file records the intended behavior of the local Immich deployment. Read it before making changes so a local fix does not silently undo another customization.
 
+For the service inventory, schedules, ports, workflow ownership, search variants, pagination behavior, and restart commands, also read [`OPERATIONS.md`](OPERATIONS.md).
+
 ## Version and deployment
 
 - Immich server and machine-learning images are pinned to `2.7.5`.
@@ -58,6 +60,24 @@ This file records the intended behavior of the local Immich deployment. Read it 
 - `Pick cover` opens the full picker; selecting a candidate is a manual action and locks the album.
 - After editing `web/index.html`, regenerate `index.html.gz` and `index.html.br`, verify both decompress byte-for-byte to the HTML, and recreate `immich-server`.
 
+## Album search and pagination UI
+
+- The minimum album-size filter is enabled by default with mode `Images` and threshold `30`. It supports `Images + video`, `Images`, and `Video`, and its enabled state, mode, and threshold persist in browser `localStorage`.
+- Filtering happens before album name/description filtering and pagination. Albums below the selected count must be absent from both grid and list views and from pagination totals.
+- If the local media-count helper is unavailable, the album list fails open rather than presenting an empty library; the browser console records the helper failure.
+- Album name/description filtering happens before the custom client-side page slice, so filtered totals and page counts must agree.
+- Album pages default to 100 items; the compiled patch permits 24 through 500 and persists the selection in browser `localStorage` as `immichAlbumPageSize`.
+- Sorting and grouping operate on the current page. Preserve grid and list views, existing album filtering, and persisted page size when changing the compiled album chunk.
+- `web/index.html` owns the visible pager controls; `web/_app/immutable/chunks/Cv3joWmC2.js` owns the album slicing state. Their compressed siblings must be regenerated after either source is changed.
+- Album Smart Search on port 3099 is a separate manually started companion, not a Compose-managed background service. Standard Smart Search and reverse face search are distinct features.
+
+## Background-service boundaries
+
+- Three Folder Album Creator containers synchronize first-level folders for three separate user roots. They run immediately and every five minutes, but they do not scan libraries, generate thumbnails/faces, or choose covers.
+- The profile picker container owns interactive picking, fast hover candidates, bulk picking, and the automatic cover worker. Its default worker cadence is 60 seconds, with a five-minute album grace period and a batch size of three.
+- Reverse face search is a read-only Compose helper on port 2299. Profile picker is on port 3111. Do not expose Postgres, Valkey, or Immich ML directly to the host merely for these helpers.
+- The legacy deployed-only `X:\Immich\album-cover-picker` is not the active picker. Do not revive or modify it when work targets `immich-profile-picture-picker`.
+
 ## Expected custom database objects
 
 - `album_cover_policy` and its album insert/update triggers implement automatic/manual cover state.
@@ -76,4 +96,5 @@ After relevant changes, verify:
 5. No assigned album cover points to an asset without a thumbnail.
 6. A new album transitions `pending -> automatic`, then a manual change transitions it to `locked` and blocks later automatic writes.
 7. The hover panel can be reached without closing and compressed web assets match the source HTML.
-
+8. With the size filter enabled, albums below the chosen image/video count are hidden and pagination totals agree; filter and page-size persistence, grid/list views, sorting, and grouping still work.
+9. Folder album creators, reverse face search, and profile picker are running; do not claim Album Smart Search auto-starts while it remains manual.
